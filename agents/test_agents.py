@@ -57,13 +57,14 @@ class RandomAgent(Agent):
             discard_card = random.choice([0, 1, 2])
 
         if action == action_types.CALL:
-            ammount_to_call = observation["opp_bet"] - observation["my_bet"]
+            # call or check
+            ammount_to_call = observation["opp_bet"]
             return ammount_to_call, discard_card
 
         if action == action_types.RAISE:
-            max_raise = 100
-            min_raise = observation["min_raise"]
-            my_bet = random.randint(min_raise, max_raise)
+            max_bet = 100
+            min_bet = min(100, observation["min_raise"] + observation["opp_bet"])
+            my_bet = random.randint(min_bet, max_bet)
             return my_bet, discard_card
 
         assert False

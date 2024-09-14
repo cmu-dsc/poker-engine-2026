@@ -150,7 +150,7 @@ class PokerEnv(gym.Env):
         self.community_cards = cards[6:]
 
         # Reset the bets, and no cards are shown yet
-        self.bets = [0, 0]
+        self.bets = [1, 2]
         self.shown_cards = [np.array([-1, -1, -1]), np.array([-1, -1, -1])]
         self.min_raise = self.BIG_BLIND
 

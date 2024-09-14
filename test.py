@@ -13,8 +13,12 @@ if __name__ == "__main__":
 
     terminated = False
     while not terminated:
+        print("\n#####################")
         print("Bot1 cards:", obs1["my_cards"], "Bot2 cards:", obs2["my_cards"])
         print("Community cards:", obs1["community_cards"])
+        print("Bot1 bet:", obs1["my_bet"], "Bot2 bet:", obs2["my_bet"])
+        print("#####################\n" )
+
         if obs1["turn"] == 0:
             action = bot1.act(obs1, reward1, terminated, trunc, info)
         else:

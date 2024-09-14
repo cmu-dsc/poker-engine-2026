@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 
 
 class Agent(ABC):
-
     @abstractmethod
     def act(
         self, observation, reward, terminated, truncated, info
