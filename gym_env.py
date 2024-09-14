@@ -229,8 +229,9 @@ class PokerEnv(gym.Env):
 
         # Discard phase
         if self.street == 1:
-            self.shown_cards[self.turn] = self.player_cards[self.turn][card_to_discard]
-            self.player_cards[self.turn][card_to_discard] = -1
+            if self.shown_cards[self.turn] != -1:
+                self.shown_cards[self.turn] = self.player_cards[self.turn][card_to_discard]
+                self.player_cards[self.turn][card_to_discard] = -1
 
         # We consider invalid actions as folding
         if action_type == self.ActionType.INVALID:
