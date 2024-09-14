@@ -43,6 +43,8 @@ class PokerEnv(gym.Env):
     SMALL_BIND = 1
     BIG_BLIND = 2
 
+    DISCARD_CARD_POS = 0
+
     NO_DISCARD = -1
 
     def __init__(self, num_games) -> None:
@@ -125,7 +127,7 @@ class PokerEnv(gym.Env):
             "min_raise": self.min_raise,
         }
 
-    def _end_game(self, winner):
+    def _update_bankrolls(self, winner):
         """
         End the game, update the bankrolls
         winner == -1 means a tie
@@ -152,23 +154,25 @@ class PokerEnv(gym.Env):
         self.shown_cards = [np.array([-1, -1, -1]), np.array([-1, -1, -1])]
         self.min_raise = self.BIG_BLIND
 
+        self.street = 0
+
         self.game_num += 1
 
     def reset(self, *, seed=None, options=None):
         """
         Resets the entire game.
         """
+        # match initialization
+
         super().reset(seed=seed)
 
-        self.small_blind_player = 0
-        self.turn = self.small_blind_player
+        # cumulative winnings across all games
         self.bankrolls = [0, 0]
-        self.game_num = 1
+        self.game_num = 0  # start_game will put to 1
+        self.small_blind_player = 1  # start_game will put to 0
 
-        # There are 4 streets: Preflop, Flop, Turn, River
-        self.street = 0
-
-        self.min_raise = self.BIG_BLIND
+        # game initialization
+        self._start_new_game()
 
         obs1, obs2 = self._get_obs(0), self._get_obs(1)
         return (obs1, obs2), None
@@ -177,7 +181,6 @@ class PokerEnv(gym.Env):
         """
         Validates the action taken by the player.
         """
-        assert self.game_num <= self.num_games
         new_bet, card_to_discard = action
 
         other_player = 1 - self.turn
@@ -185,10 +188,25 @@ class PokerEnv(gym.Env):
         # detect if bet is raise, fold, or check
         other_player_old_bet = self.bets[other_player]
 
+        # amount curr player is raising
+        if new_bet < other_player_old_bet:
+            return self.ActionType.FOLD
+        elif new_bet == other_player_old_bet:
+            if new_bet == self.bets[self.turn]:
+                return self.ActionType.CHECK
+            else:
+                return self.ActionType.CALL
+        # raise
+        raised_by = new_bet - other_player_old_bet
+        if raised_by < self.min_raise:
+            print("Raise must be at least", self.min_raise, "but was", raised_by)
+            return self.ActionType.INVALID
+
         # Discard has to be done in the flop and not any other streets
         if self.street == 1:
             # on the flop, must be valid discard
-            if card_to_discard < 0:
+            # TODO: What if a player decides to fold? Do they still have to show their cards?
+            if card_to_discard < 0 and self.ACTION_TYPE != self.ActionType.FOLD:
                 print("Did not discard a card during the flop")
                 return self.ActionType.INVALID
         else:
@@ -196,16 +214,6 @@ class PokerEnv(gym.Env):
                 print("Discarded a card when it wasn't the flop")
                 return self.ActionType.INVALID
 
-        # amount curr player is raising
-        if new_bet < other_player_old_bet:
-            return self.ActionType.FOLD
-        elif new_bet == other_player_old_bet:
-            return self.ActionType.CHECK
-        # raise
-        raised_by = new_bet - other_player_old_bet
-        if raised_by < self.min_raise:
-            print("Raise must be at least", self.min_raise, "but was", raised_by)
-            return self.ActionType.INVALID
         return self.ActionType.RAISE
 
     def _next_street(self):
@@ -214,13 +222,14 @@ class PokerEnv(gym.Env):
         """
         self.street += 1
         self.min_raise = self.BIG_BLIND
+        self.turn = self.small_blind_player
 
     def step(self, action):
         """
         Takes a step in the game, given the action taken by the active player.
         """
         action_type = self._get_action_type(action)
-
+        print("Action type:", action_type)
         observation = None
         reward = (0, 0)
         terminated = self.game_num > self.num_games
@@ -229,11 +238,19 @@ class PokerEnv(gym.Env):
 
         bet_amount, card_to_discard = action
 
+        if terminated:
+            observation = (self._get_obs(0), self._get_obs(1))
+            return observation, reward, terminated, truncated, info
+
         # Discard phase
-        if self.street == 1:
-            if self.shown_cards[self.turn] != -1:
-                self.shown_cards[self.turn] = self.player_cards[self.turn][card_to_discard]
-                self.player_cards[self.turn][card_to_discard] = -1
+        if (
+            self.street == 1
+            and self.shown_cards[self.turn][self.DISCARD_CARD_POS] == -1
+        ):
+            self.shown_cards[self.turn][self.DISCARD_CARD_POS] = self.player_cards[
+                self.turn
+            ][card_to_discard]
+            self.player_cards[self.turn][card_to_discard] = -1
 
         # We consider invalid actions as folding
         if action_type == self.ActionType.INVALID:
@@ -241,17 +258,20 @@ class PokerEnv(gym.Env):
 
         if action_type == self.ActionType.FOLD:
             winner = 1 - self.turn
-            self._end_game(winner)  # by folding, we must lose
+            self._update_bankrolls(winner=winner)  # by folding, we must lose
             observation = (self._get_obs(0), self._get_obs(1))
-            self._start_new_game()
             if winner == 0:
                 reward = (min(self.bets), -min(self.bets))
             else:
                 reward = (-min(self.bets), min(self.bets))
 
+            self._start_new_game()
+            return observation, reward, terminated, truncated, info
+
         elif action_type == self.ActionType.CALL:
             self._next_street()
             if self.street > 3:
+                # game ends
                 board_cards = map(self.int_to_card, self.community_cards)
 
                 player_1_hand_score = self.evaluator.evaluate(
@@ -270,28 +290,30 @@ class PokerEnv(gym.Env):
                     winner = 1
                 else:
                     winner = 0
-                self._end_game(winner)
+                self._update_bankrolls(winner)
                 observation = (self._get_obs(0), self._get_obs(1))
-                self._start_new_game()
                 if winner == 0:
                     reward = (min(self.bets), -min(self.bets))
                 else:
                     reward = (-min(self.bets), min(self.bets))
+                self._start_new_game()
+                return observation, reward, terminated, truncated, info
 
-        elif action == self.ActionType.CHECK:
+        elif action_type == self.ActionType.CHECK:
             if self.turn == 1 - self.small_blind_player:
                 # big blind checks mean next street
                 self._next_street()
-            else:
-                self.turn = 1 - self.turn
-            observation = (self._get_obs(0), self._get_obs(1))
+                observation = (self._get_obs(0), self._get_obs(1))
+                return observation, reward, terminated, truncated, info
 
-        elif action == self.ActionType.RAISE:
+        elif action_type == self.ActionType.RAISE:
             self.bets[self.turn] = bet_amount
             self.min_raise = max(self.min_raise, bet_amount - self.bets[1 - self.turn])
-            self.turn = 1 - self.turn
-            observation = (self._get_obs(0), self._get_obs(1))
+        else:
+            assert False
 
+        self.turn = 1 - self.turn
+        observation = (self._get_obs(0), self._get_obs(1))
         return observation, reward, terminated, truncated, info
 
 
