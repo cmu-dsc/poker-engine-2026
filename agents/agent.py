@@ -1,6 +1,22 @@
 from abc import ABC, abstractmethod
+from typing import Tuple, Any
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import uvicorn
 
 
+class ActionRequest(BaseModel):
+    observation: Any  # Replace 'Any' with specific types if possible
+    reward: int
+    terminated: bool
+    truncated: bool
+    info: Any
+
+
+class ActionResponse(BaseModel):
+    action: Tuple[int, int]
+    
+    
 class Agent(ABC):
     @abstractmethod
     def act(
@@ -24,3 +40,25 @@ class Agent(ABC):
         Observe the result of your action. However, it's not your turn.
         """
         pass
+
+    async def get_action(self, request: ActionRequest) -> ActionResponse:
+        """
+        API endpoint to get an action based on the current game state.
+        """
+        try:
+            action = self.act(
+                observation=request.observation,
+                reward=request.reward,
+                terminated=request.terminated,
+                truncated=request.truncated,
+                info=request.info
+            )
+            return ActionResponse(action=action)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    def run(self, host="0.0.0.0", port=8000):
+        """
+        Method to start the FastAPI server from within the agent class.
+        """
+        uvicorn.run(self.app, host=host, port=port)

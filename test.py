@@ -37,15 +37,7 @@ def test_agents():
 
 def test_agents_with_api_calls():
     env = PokerEnv(num_games=5)
-
-    (obs0, obs1), info = env.reset()
     bot0, bot1 = AllInAgent(), RandomAgent()
-
-    reward0 = reward1 = 0
-    trunc = None
-
-    terminated = False
-
     # TODO: Implement the game loop with API calls
         
 
