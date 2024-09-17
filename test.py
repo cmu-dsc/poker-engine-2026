@@ -43,7 +43,6 @@ def test_agents_with_api_calls():
         "Converts numpy arrays to lists so that they can be json serialized"
         prepared_obs = dict()
         for key, value in observation.items():
-            print(type(value))
             if type(value) == numpy.ndarray:
                 converted_value = value.tolist()
             else:
@@ -76,12 +75,8 @@ def test_agents_with_api_calls():
                 "truncated": trunc,
                 "info": info
             }
-            print(bot0_action_request)
-            # bot0_action_request = ActionRequest(observation=obs0, reward=reward0, terminated=terminated, truncated=trunc, info = info)
             bot0_action_response = requests.get(bot0_ep, json=bot0_action_request)
             action = bot0_action_response.json()
-            print("Bot0 Action:", action)
-            # action = bot0.get_action(bot0_action_request)
             # bot1.observe(obs1, reward1, terminated, trunc, info)
         else:
             bot1_action_request = {
@@ -91,12 +86,8 @@ def test_agents_with_api_calls():
                 "truncated": trunc,
                 "info": info
             }
-            print(bot1_action_request)
             bot1_action_response = requests.get(bot1_ep, json=bot1_action_request)
             action = bot1_action_response.json()
-            print(action)
-            print("Bot1 Action:", action)
-            # action = bot1.get_action(bot1_action_request)
             # bot0.observe(obs0, reward0, terminated, trunc, info)
 
         action_value = action["action"]
@@ -107,7 +98,6 @@ def test_agents_with_api_calls():
             action=action_value
         )
         print("Bot0 reward:", reward0, "Bot1 reward:", reward1)
-    # TODO: Implement the game loop with API calls
         
 
 if __name__ == "__main__":

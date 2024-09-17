@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Tuple, Any
-from fastapi import FastAPI, HTTPException, APIRouter
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import uvicorn
 
