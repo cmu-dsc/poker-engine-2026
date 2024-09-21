@@ -63,6 +63,8 @@ def test_agents_with_api_calls():
 
     def _call_agent_ep(method, base_url, ep, payload) -> dict:
         response = requests.request(method, base_url + ep, json=payload)
+        if response.status_code // 200 != 1:
+            raise Exception(f"Failed API Request! - Status Code {response.status_code}")
         return response.json()
 
     env = PokerEnv(num_games=5)
