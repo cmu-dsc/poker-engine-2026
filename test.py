@@ -5,6 +5,7 @@ import requests
 import json
 import numpy
 
+
 def test_agents():
     env = PokerEnv(num_games=5)
 
@@ -21,7 +22,7 @@ def test_agents():
         print("Bot0 cards:", obs0["my_cards"], "Bot1 cards:", obs1["my_cards"])
         print("Community cards:", obs0["community_cards"])
         print("Bot0 bet:", obs0["my_bet"], "Bot1 bet:", obs1["my_bet"])
-        print("#####################\n" )
+        print("#####################\n")
 
         if obs0["turn"] == 0:
             action = bot0.act(obs0, reward0, terminated, trunc, info)
@@ -39,21 +40,42 @@ def test_agents():
 
 
 def test_agents_with_api_calls():
-    def _prepare_observation(observation):
-        "Converts numpy arrays to lists so that they can be json serialized"
-        prepared_obs = dict()
-        for key, value in observation.items():
-            if type(value) == numpy.ndarray:
-                converted_value = value.tolist()
-            else:
-                converted_value = value
-            prepared_obs[key] = converted_value
-        return prepared_obs
+    def _prepare_payload(obs, reward):
+        def _prepare_observation():
+            "Converts numpy arrays to lists so that they can be json serialized"
+            prepared_obs = dict()
+            for key, value in obs.items():
+                if isinstance(value, numpy.ndarray):
+                    converted_value = value.tolist()
+                else:
+                    converted_value = value
+                prepared_obs[key] = converted_value
+            print("Observation:")
+            for key, value in prepared_obs.items():
+                print("", key, value, ":", type(value))
+            return prepared_obs
+
+        payload = {
+            "observation": _prepare_observation(),
+            "reward": reward,
+            "terminated": terminated,
+            "truncated": trunc,
+            "info": info,
+        }
+        return payload
+
+    def _call_agent_ep(method, base_url, ep, payload) -> dict:
+        response = requests.request(method, base_url + ep, json=payload)
+        # print(bot0_action_response.json())
+        return response.json()
+
     env = PokerEnv(num_games=5)
 
     (obs0, obs1), info = env.reset()
-    bot0_ep = "http://0.0.0.0:8000" + "/get_action"
-    bot1_ep = "http://0.0.0.0:8001" + "/get_action"
+    GET_ACTION_EP = "/get_action"
+    SEND_OBS_EP = "/send_observation"
+    BASE_URL_0 = "http://0.0.0.0:8000"
+    BASE_URL_1 = "http://0.0.0.0:8001"
 
     reward0 = reward1 = 0
     trunc = False
@@ -65,30 +87,15 @@ def test_agents_with_api_calls():
         print("Bot0 cards:", obs0["my_cards"], "Bot1 cards:", obs1["my_cards"])
         print("Community cards:", obs0["community_cards"])
         print("Bot0 bet:", obs0["my_bet"], "Bot1 bet:", obs1["my_bet"])
-        print("#####################\n" )
-
+        print("#####################\n")
+        bot0_payload = _prepare_payload(obs0, reward0)
+        bot1_payload = _prepare_payload(obs1, reward1)
         if obs0["turn"] == 0:
-            bot0_action_request = {
-                "observation": _prepare_observation(obs0),
-                "reward": reward0,
-                "terminated": terminated,
-                "truncated": trunc,
-                "info": info
-            }
-            bot0_action_response = requests.get(bot0_ep, json=bot0_action_request)
-            action = bot0_action_response.json()
-            # bot1.observe(obs1, reward1, terminated, trunc, info)
+            action = _call_agent_ep("GET", BASE_URL_0, GET_ACTION_EP, bot0_payload)
+            _call_agent_ep("POST", BASE_URL_1, SEND_OBS_EP, bot1_payload)
         else:
-            bot1_action_request = {
-                "observation": _prepare_observation(obs1),
-                "reward": reward0,
-                "terminated": terminated,
-                "truncated": trunc,
-                "info": info
-            }
-            bot1_action_response = requests.get(bot1_ep, json=bot1_action_request)
-            action = bot1_action_response.json()
-            # bot0.observe(obs0, reward0, terminated, trunc, info)
+            action = _call_agent_ep("GET", BASE_URL_0, GET_ACTION_EP, bot1_payload)
+            _call_agent_ep("POST", BASE_URL_1, SEND_OBS_EP, bot0_payload)
 
         action_value = action["action"]
 
@@ -98,7 +105,7 @@ def test_agents_with_api_calls():
             action=action_value
         )
         print("Bot0 reward:", reward0, "Bot1 reward:", reward1)
-        
+
 
 if __name__ == "__main__":
     test_agents_with_api_calls()
