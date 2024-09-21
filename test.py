@@ -1,12 +1,12 @@
 from gym_env import PokerEnv
-from agents.test_agents import AllInAgent, RandomAgent
+from agents.test_agents import all_agent_classes
 
 
-def test_agents():
+def test_agents(agent1, agent2):
     env = PokerEnv(num_games=5)
 
     (obs0, obs1), info = env.reset()
-    bot0, bot1 = AllInAgent(), RandomAgent()
+    bot0, bot1 = agent1(), agent2()
 
     reward0 = reward1 = 0
     trunc = None
@@ -34,6 +34,12 @@ def test_agents():
         )
         print("Bot0 reward:", reward0, "Bot1 reward:", reward1)
 
+def test_all_base_agents():
+    for agent1 in all_agent_classes:
+        for agent2 in all_agent_classes:
+            print(type(agent1).__name__, "vs", type(agent2).__name__)
+            test_agents(agent1, agent2)
+
 
 def test_agents_with_api_calls():
     env = PokerEnv(num_games=5)
@@ -42,4 +48,4 @@ def test_agents_with_api_calls():
         
 
 if __name__ == "__main__":
-    test_agents()
+    test_all_base_agents()

@@ -79,3 +79,5 @@ class ProbabilityAgent(Agent):
         # pool of all hands by the flop discards though
         # so we might have to do it ourselves
         pass
+
+all_agent_classes = (FoldAgent, CallingStationAgent, AllInAgent, RandomAgent, ProbabilityAgent)
