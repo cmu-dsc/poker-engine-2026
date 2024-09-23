@@ -1,10 +1,23 @@
 # PokerBotEngine2025
 
 ## How to run the engine
-Make a conda env or virtualenv and install the requirements from requirements.txt
 
-https://stackoverflow.com/questions/43069780/how-to-create-virtual-env-with-python3
+1. Create a virtual environment:
+   ```bash
+   python -m venv .venv
+   ```
 
-```bash
-pip install -r requirements.txt
-```
+2. Activate the virtual environment:
+   - On Windows:
+     ```bash
+     .venv\Scripts\activate
+     ```
+   - On macOS and Linux:
+     ```bash
+     source .venv/bin/activate
+     ```
+
+3. Install the required packages:
+   ```bash
+   pip install -r requirements.txt
+   ```
