@@ -5,6 +5,8 @@ import requests
 import json
 import numpy
 
+class TestAgentError(ValueError):
+    pass
 
 def test_agents():
     env = PokerEnv(num_games=5)
@@ -64,7 +66,7 @@ def test_agents_with_api_calls():
     def _call_agent_ep(method, base_url, ep, payload) -> dict:
         response = requests.request(method, base_url + ep, json=payload)
         if response.status_code // 200 != 1:
-            raise Exception(f"Failed API Request! - Status Code {response.status_code}")
+            raise TestAgentError(f"Failed API Request! - Status Code {response.status_code}")
         return response.json()
 
     env = PokerEnv(num_games=5)
@@ -72,8 +74,8 @@ def test_agents_with_api_calls():
     (obs0, obs1), info = env.reset()
     GET_ACTION_EP = "/get_action"
     SEND_OBS_EP = "/post_observation"
-    BASE_URL_0 = "http://0.0.0.0:8000"
-    BASE_URL_1 = "http://0.0.0.0:8001"
+    BASE_URL_0 = "http://127.0.0.1:8000"
+    BASE_URL_1 = "http://127.0.0.1:8001"
 
     reward0 = reward1 = 0
     trunc = False
