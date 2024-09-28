@@ -1,6 +1,6 @@
 from gym_env import PokerEnv
-from agents.test_agents import AllInAgent, RandomAgent
-from agents.agent import ActionRequest, ActionResponse
+from agents.test_agents import all_agent_classes
+import pandas as pd
 import requests
 import json
 import numpy
@@ -8,11 +8,11 @@ import numpy
 class TestAgentError(ValueError):
     pass
 
-def test_agents():
+def test_agents(agent1, agent2):
     env = PokerEnv(num_games=5)
 
     (obs0, obs1), info = env.reset()
-    bot0, bot1 = AllInAgent(), RandomAgent()
+    bot0, bot1 = agent1(), agent2()
 
     reward0 = reward1 = 0
     trunc = None
@@ -39,6 +39,21 @@ def test_agents():
             action=action
         )
         print("Bot0 reward:", reward0, "Bot1 reward:", reward1)
+    return obs0['my_bankroll'] - obs1['my_bankroll']
+
+def test_all_base_agents():
+    agent_names = [x.name() for x in all_agent_classes]
+    bankroll_matrix = []
+    for i1, agent1 in enumerate(all_agent_classes):
+        bankroll_matrix.append([])
+        for i2, agent2 in enumerate(all_agent_classes):
+            print(agent_names[i1], "vs", agent_names[i2])
+            net_bankroll = test_agents(agent1, agent2)
+            bankroll_matrix[-1].append(net_bankroll)
+    
+    bankroll_matrix = pd.DataFrame(bankroll_matrix, columns=agent_names, index=agent_names)
+    print(bankroll_matrix)
+
 
 
 def test_agents_with_api_calls():
@@ -112,4 +127,5 @@ def test_agents_with_api_calls():
 
 
 if __name__ == "__main__":
+    test_all_base_agents()
     test_agents_with_api_calls()
