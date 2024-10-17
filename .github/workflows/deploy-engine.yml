@@ -11,22 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger rebuild and redeploy workflow
-        uses: actions/github-script@v7
-        env:
-          ENGINE_PAT: ${{ secrets.ENGINE_PAT }}
+        uses: peter-evans/repository-dispatch@v3
         with:
-          script: |
-            const axios = require('axios');
-            const repo = 'cmu-dsc/poker-backend-2025';
-            const token = process.env.ENGINE_PAT;
-            
-            await axios({
-              method: 'post',
-              url: `https://api.github.com/repos/${repo}/actions/workflows/deploy-match-lambda.yml/dispatches`,
-              headers: {
-                Authorization: `token ${token}`,
-              },
-              data: {
-                ref: 'main',
-              },
-            });
+          token: ${{ secrets.ENGINE_PAT }}
+          repository: cmu-dsc/poker-backend-2025
+          event-type: rebuild-engine
