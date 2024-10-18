@@ -9,20 +9,22 @@ from typing import Any, Callable, Dict
 import numpy as np
 import pandas as pd
 import requests
+import logging
 
 from agents.test_agents import AllInAgent, CallingStationAgent, all_agent_classes
 from gym_env import PokerEnv
 
 
-def run_api_bot(bot_class: Callable, port: int) -> None:
+def run_api_bot(bot_class: Callable, port: int, logger: logging.Logger) -> None:
     """
     Run an API-based bot on a specified port.
 
     Args:
         bot_class (Callable): The bot class to instantiate.
         port (int): The port number to run the bot on.
+        logger (logging.Logger): The logger object to use for logging.
     """
-    bot = bot_class()
+    bot = bot_class(logger)
     bot.run(port=port)
 
 
@@ -125,14 +127,18 @@ def run_local_match(agent1: Callable, agent2: Callable, num_games: int = 5) -> f
     return obs0["my_bankroll"] - obs1["my_bankroll"]
 
 
-def run_api_match(base_url_0: str, base_url_1: str, num_games: int = 5) -> None:
+def run_api_match(base_url_0: str, base_url_1: str, logger: logging.Logger, num_games: int = 1000) -> Dict[str, Any]:
     """
     Run a match between two API-based agents.
 
     Args:
         base_url_0 (str): The base URL for the first agent's API.
         base_url_1 (str): The base URL for the second agent's API.
+        logger (logging.Logger): The logger object to use for logging.
         num_games (int, optional): The number of games to play. Defaults to 5.
+
+    Returns:
+        Dict[str, Any]: A dictionary containing the match results.
     """
     env = PokerEnv(num_games=num_games)
     (obs0, obs1), info = env.reset()
@@ -144,8 +150,15 @@ def run_api_match(base_url_0: str, base_url_1: str, num_games: int = 5) -> None:
     truncated = False
 
     terminated = False
+    game_count = 0
+    total_reward0 = 0
+    total_reward1 = 0
+
+    logger.info(f"Starting match with {num_games} games")
+
     while not terminated:
-        print_game_state(obs0, obs1)
+        logger.debug(f"Game {game_count + 1}, Turn: {obs0['turn']}")
+        log_game_state(logger, obs0, obs1)
 
         bot0_payload = prepare_payload(obs0, reward0, terminated, truncated, info)
         bot1_payload = prepare_payload(obs1, reward1, terminated, truncated, info)
@@ -158,10 +171,30 @@ def run_api_match(base_url_0: str, base_url_1: str, num_games: int = 5) -> None:
             call_agent_api("POST", base_url_0, send_obs_endpoint, bot0_payload)
 
         action_value = action["action"]
-        print(f"Bot {obs0['turn']} did action {action_value}")
+        logger.debug(f"Bot {obs0['turn']} did action {action_value}")
 
         (obs0, obs1), (reward0, reward1), terminated, truncated, info = env.step(action=action_value)
-        print(f"Bot0 reward: {reward0}, Bot1 reward: {reward1}")
+        logger.debug(f"Bot0 reward: {reward0}, Bot1 reward: {reward1}")
+
+        total_reward0 += reward0
+        total_reward1 += reward1
+
+        if info.get("game_ended", False):
+            game_count += 1
+            logger.info(f"Game {game_count} ended. Bot0 total reward: {total_reward0}, Bot1 total reward: {total_reward1}")
+
+            if game_count == num_games:
+                terminated = True
+
+    logger.info("Match completed")
+    logger.info(f"Final results - Bot0 total reward: {total_reward0}, Bot1 total reward: {total_reward1}")
+
+    return {
+        "outcome": {
+            "bot0_reward": total_reward0,
+            "bot1_reward": total_reward1
+        }
+    }
 
 
 def print_game_state(obs0: Dict[str, Any], obs1: Dict[str, Any]) -> None:
@@ -178,6 +211,23 @@ def print_game_state(obs0: Dict[str, Any], obs1: Dict[str, Any]) -> None:
     print(f"Community cards: {obs0['community_cards']}")
     print(f"Bot0 bet: {obs0['my_bet']}, Bot1 bet: {obs1['my_bet']}")
     print("#####################\n")
+
+
+def log_game_state(logger: logging.Logger, obs0: Dict[str, Any], obs1: Dict[str, Any]) -> None:
+    """
+    Log the current game state.
+
+    Args:
+        logger (logging.Logger): The logger object to use for logging.
+        obs0 (Dict[str, Any]): Observation for the first agent.
+        obs1 (Dict[str, Any]): Observation for the second agent.
+    """
+    logger.debug("#####################")
+    logger.debug(f"Turn: {obs0['turn']}")
+    logger.debug(f"Bot0 cards: {obs0['my_cards']}, Bot1 cards: {obs1['my_cards']}")
+    logger.debug(f"Community cards: {obs0['community_cards']}")
+    logger.debug(f"Bot0 bet: {obs0['my_bet']}, Bot1 bet: {obs1['my_bet']}")
+    logger.debug("#####################")
 
 
 def run_all_local_matches() -> None:
@@ -198,8 +248,8 @@ def run_all_local_matches() -> None:
 
 if __name__ == "__main__":
     # Run API-based match
-    process0 = multiprocessing.Process(target=run_api_bot, args=(AllInAgent, 8000))
-    process1 = multiprocessing.Process(target=run_api_bot, args=(CallingStationAgent, 8001))
+    process0 = multiprocessing.Process(target=run_api_bot, args=(AllInAgent, 8000, logging.getLogger()))
+    process1 = multiprocessing.Process(target=run_api_bot, args=(CallingStationAgent, 8001, logging.getLogger()))
 
     process0.start()
     process1.start()

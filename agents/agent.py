@@ -1,3 +1,4 @@
+import logging
 from abc import ABC, abstractmethod
 from typing import Tuple, List, Any, TypedDict
 from fastapi import FastAPI, HTTPException
@@ -41,8 +42,9 @@ class ActionResponse(BaseModel):
 
 
 class Agent(ABC):
-    def __init__(self):
+    def __init__(self, logger: logging.Logger):
         self.app = FastAPI()
+        self.logger = logger
         self.add_routes()
 
     @abstractmethod
@@ -70,7 +72,7 @@ class Agent(ABC):
             """
             API endpoint to get an action based on the current game state.
             """
-            print(f"ActionRequest: {request}")
+            self.logger.debug(f"ActionRequest: {request}")
             try:
                 action = self.act(
                     observation=request.observation,
@@ -79,8 +81,10 @@ class Agent(ABC):
                     truncated=request.truncated,
                     info=request.info,
                 )
+                self.logger.debug(f"Action taken: {action}")
                 return ActionResponse(action=action)
             except Exception as e:
+                self.logger.error(f"Error in get_action: {str(e)}")
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.post("/post_observation")
@@ -88,7 +92,7 @@ class Agent(ABC):
             """
             API endpoint to send the observation to the bot
             """
-            print(f"Observation: {request}")
+            self.logger.debug(f"Observation: {request}")
             try:
                 self.observe(
                     observation=request.observation,
@@ -98,10 +102,12 @@ class Agent(ABC):
                     info=request.info,
                 )
             except Exception as e:
+                self.logger.error(f"Error in post_observation: {str(e)}")
                 raise HTTPException(status_code=500, detail=str(e))
 
     def run(self, host="0.0.0.0", port=8000):
         """
         Method to start the FastAPI server from within the agent class.
         """
+        self.logger.info(f"Starting agent server on {host}:{port}")
         uvicorn.run(self.app, host=host, port=port)
