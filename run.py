@@ -179,7 +179,7 @@ def run_api_match(base_url_0: str, base_url_1: str, logger: logging.Logger, num_
         total_reward0 += reward0
         total_reward1 += reward1
 
-        if info.get("game_ended", False):
+        if info is not None and info.get("game_ended", False):
             game_count += 1
             logger.info(f"Game {game_count} ended. Bot0 total reward: {total_reward0}, Bot1 total reward: {total_reward1}")
 
