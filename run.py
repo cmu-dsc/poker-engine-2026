@@ -5,11 +5,12 @@ Script to run matches between agents.
 import logging
 import multiprocessing
 import time
-from typing import Any, Callable, Dict
+from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
 import requests
+from agents.agent import Agent
 from agents.test_agents import AllInAgent, CallingStationAgent, all_agent_classes
 from gym_env import PokerEnv
 
@@ -73,13 +74,13 @@ def call_agent_api(method: str, base_url: str, endpoint: str, payload: Dict[str,
             time.sleep(delay)
 
 
-def run_local_match(agent1: Callable, agent2: Callable, num_games: int = 5, logger: logging.Logger = None) -> float:
+def run_local_match(agent1: Agent, agent2: Agent, num_games: int = 5, logger: logging.Logger = None) -> float:
     """
     Run a local match between two agents.
 
     Args:
-        agent1 (Callable): The first agent class.
-        agent2 (Callable): The second agent class.
+        agent1 (Agent): The first agent instance.
+        agent2 (Agent): The second agent instance.
         num_games (int, optional): The number of games to play. Defaults to 5.
         logger (logging.Logger, optional): The logger object to use for logging. Defaults to None.
 
@@ -88,7 +89,7 @@ def run_local_match(agent1: Callable, agent2: Callable, num_games: int = 5, logg
     """
     env = PokerEnv(num_games=num_games, logger=logger)
     (obs0, obs1), info = env.reset()
-    bot0, bot1 = agent1(), agent2()
+    bot0, bot1 = agent1, agent2
 
     reward0 = reward1 = 0
     truncated = None
