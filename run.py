@@ -42,7 +42,7 @@ def prepare_payload(obs: Dict[str, Any], reward: float, terminated: bool, trunca
     }
 
 
-def call_agent_api(method: str, base_url: str, endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+def call_agent_api(method: str, base_url: str, endpoint: str, payload: Dict[str, Any], logger: logging.Logger) -> Dict[str, Any]:
     """
     Make an API call to an agent with retry logic.
 
@@ -152,11 +152,11 @@ def run_api_match(base_url_0: str, base_url_1: str, logger: logging.Logger, num_
         bot1_payload = prepare_payload(obs1, reward1, terminated, truncated, info)
 
         if obs0["turn"] == 0:
-            action = call_agent_api("GET", base_url_0, get_action_endpoint, bot0_payload)
-            call_agent_api("POST", base_url_1, send_obs_endpoint, bot1_payload)
+            action = call_agent_api("GET", base_url_0, get_action_endpoint, bot0_payload, logger)
+            call_agent_api("POST", base_url_1, send_obs_endpoint, bot1_payload, logger)
         else:
-            action = call_agent_api("GET", base_url_1, get_action_endpoint, bot1_payload)
-            call_agent_api("POST", base_url_0, send_obs_endpoint, bot0_payload)
+            action = call_agent_api("GET", base_url_1, get_action_endpoint, bot1_payload, logger)
+            call_agent_api("POST", base_url_0, send_obs_endpoint, bot0_payload, logger)
 
         action_value = action["action"]
         logger.debug(f"Bot {obs0['turn']} did action {action_value}")
