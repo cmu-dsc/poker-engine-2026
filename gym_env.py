@@ -218,7 +218,7 @@ class PokerEnv(gym.Env):
         # raise
         raised_by = new_bet - other_player_old_bet
         if raised_by < self.min_raise:
-            self.logger.error("Raise must be at least", self.min_raise, "but was", raised_by)
+            self.logger.error(f"Raise must be at least {self.min_raise} but was {raised_by}")
             return self.ActionType.INVALID
 
         # Discard has to be done in the flop and not any other streets
@@ -271,7 +271,7 @@ class PokerEnv(gym.Env):
         """
         bet_amount, card_to_discard = action
         action_type = self._get_action_type(action)
-        self.logger.debug("Action type:", action_type)
+        self.logger.debug(f"Action type: {action_type}")
         new_game = False
         new_street = False
         winner = None
