@@ -82,7 +82,7 @@ def run_local_match(agent1: Agent, agent2: Agent, num_games: int = 5, logger: lo
         agent1 (Agent): The first agent instance.
         agent2 (Agent): The second agent instance.
         num_games (int, optional): The number of games to play. Defaults to 5.
-        logger (logging.Logger, optional): The logger object to use for logging. Defaults to None.
+        logger (logging.Logger, optional): The logger object to use for logging.
 
     Returns:
         float: The net bankroll of agent1 vs agent2.
@@ -115,7 +115,7 @@ def run_local_match(agent1: Agent, agent2: Agent, num_games: int = 5, logger: lo
     return obs0["my_bankroll"] - obs1["my_bankroll"]
 
 
-def run_api_match(base_url_0: str, base_url_1: str, logger: logging.Logger, num_games: int = 1000) -> Dict[str, Any]:
+def run_api_match(base_url_0: str, base_url_1: str, logger: logging.Logger, player0_resources=None, player1_resources=None, num_games: int = 1000) -> Dict[str, Any]:
     """
     Run a match between two API-based agents.
 
@@ -123,10 +123,15 @@ def run_api_match(base_url_0: str, base_url_1: str, logger: logging.Logger, num_
         base_url_0 (str): The base URL for the first agent's API.
         base_url_1 (str): The base URL for the second agent's API.
         logger (logging.Logger): The logger object to use for logging.
-        num_games (int, optional): The number of games to play. Defaults to 5.
+        player0_resources: Optional resource tracker for player 0
+        player1_resources: Optional resource tracker for player 1
+        num_games (int): The number of games to play. Defaults to 1000.
 
     Returns:
-        Dict[str, Any]: A dictionary containing the match results.
+        Dict[str, Any]: A dictionary containing the match results:
+            - status: "completed", "timeout", "error"
+            - winner: None if completed normally, 0 or 1 if someone won by timeout/error
+            - bot0_reward/bot1_reward: Final rewards (only if status=="completed")
     """
     env = PokerEnv(num_games=num_games, logger=logger)
     (obs0, obs1), info = env.reset()
@@ -136,48 +141,73 @@ def run_api_match(base_url_0: str, base_url_1: str, logger: logging.Logger, num_
 
     reward0 = reward1 = 0
     truncated = False
-
     terminated = False
     game_count = 0
     total_reward0 = 0
     total_reward1 = 0
 
-    logger.info(f"Starting a new match with {num_games} games")
+    try:
+        logger.info(f"Starting a new match with {num_games} games")
 
-    while not terminated:
-        logger.debug(f"Game {game_count + 1}, Turn: {obs0['turn']}")
-        log_game_state(logger, obs0, obs1)
+        while not terminated:
+            logger.debug(f"Game {game_count + 1}, Turn: {obs0['turn']}")
+            log_game_state(logger, obs0, obs1)
 
-        bot0_payload = prepare_payload(obs0, reward0, terminated, truncated, info)
-        bot1_payload = prepare_payload(obs1, reward1, terminated, truncated, info)
+            bot0_payload = prepare_payload(obs0, reward0, terminated, truncated, info)
+            bot1_payload = prepare_payload(obs1, reward1, terminated, truncated, info)
 
-        if obs0["turn"] == 0:
-            action = call_agent_api("GET", base_url_0, get_action_endpoint, bot0_payload, logger)
-            call_agent_api("POST", base_url_1, send_obs_endpoint, bot1_payload, logger)
-        else:
-            action = call_agent_api("GET", base_url_1, get_action_endpoint, bot1_payload, logger)
-            call_agent_api("POST", base_url_0, send_obs_endpoint, bot0_payload, logger)
+            try:
+                if obs0["turn"] == 0:
+                    if player0_resources:
+                        player0_resources.start_action()
+                    action = call_agent_api("GET", base_url_0, get_action_endpoint, bot0_payload, logger)
+                    if player0_resources:
+                        player0_resources.end_action()
+                        if player0_resources.has_exceeded_time_limit():
+                            logger.info("Player 0 exceeded time limit")
+                            return {"status": "timeout", "winner": 1}
 
-        action_value = action["action"]
-        logger.debug(f"Bot {obs0['turn']} did action {action_value}")
+                    call_agent_api("POST", base_url_1, send_obs_endpoint, bot1_payload, logger)
+                else:
+                    if player1_resources:
+                        player1_resources.start_action()
+                    action = call_agent_api("GET", base_url_1, get_action_endpoint, bot1_payload, logger)
+                    if player1_resources:
+                        player1_resources.end_action()
+                        if player1_resources.has_exceeded_time_limit():
+                            logger.info("Player 1 exceeded time limit")
+                            return {"status": "timeout", "winner": 0}
 
-        (obs0, obs1), (reward0, reward1), terminated, truncated, info = env.step(action=action_value)
-        logger.debug(f"Bot0 reward: {reward0}, Bot1 reward: {reward1}")
+                    call_agent_api("POST", base_url_0, send_obs_endpoint, bot0_payload, logger)
 
-        total_reward0 += reward0
-        total_reward1 += reward1
+            except Exception as e:
+                logger.error(f"Error during bot communication: {str(e)}")
+                return {"status": "error", "winner": 1 - obs0["turn"]}
 
-        if info is not None and info.get("game_ended", False):
-            game_count += 1
-            logger.info(f"Game {game_count} ended. Bot0 total reward: {total_reward0}, Bot1 total reward: {total_reward1}")
+            action_value = action["action"]
+            logger.debug(f"Bot {obs0['turn']} did action {action_value}")
 
-            if game_count == num_games:
-                terminated = True
+            (obs0, obs1), (reward0, reward1), terminated, truncated, info = env.step(action=action_value)
+            logger.debug(f"Bot0 reward: {reward0}, Bot1 reward: {reward1}")
 
-    logger.info("Match completed")
-    logger.info(f"Final results - Bot0 total reward: {total_reward0}, Bot1 total reward: {total_reward1}")
+            total_reward0 += reward0
+            total_reward1 += reward1
 
-    return {"outcome": {"bot0_reward": total_reward0, "bot1_reward": total_reward1}}
+            if info is not None and info.get("game_ended", False):
+                game_count += 1
+                logger.info(f"Game {game_count} ended. Bot0 total reward: {total_reward0}, Bot1 total reward: {total_reward1}")
+
+                if game_count == num_games:
+                    terminated = True
+
+        logger.info("Match completed")
+        logger.info(f"Final results - Bot0 total reward: {total_reward0}, Bot1 total reward: {total_reward1}")
+
+        return {"status": "completed", "winner": None, "bot0_reward": total_reward0, "bot1_reward": total_reward1}
+
+    except Exception as e:
+        logger.error(f"Match failed with error: {str(e)}")
+        return {"status": "error", "winner": None}
 
 
 def print_game_state(obs0: Dict[str, Any], obs1: Dict[str, Any]) -> None:
