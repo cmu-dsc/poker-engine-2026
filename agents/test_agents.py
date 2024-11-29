@@ -6,93 +6,63 @@ action_types = PokerEnv.ActionType
 
 
 class FoldAgent(Agent):
-    def name():
+    def __name__(self):
         return "FoldAgent"
 
     def act(self, observation, reward, terminated, truncated, info):
-        # fold instantly by betting -1
-        bet, reveal_card = -1, -1
-        return bet, reveal_card
+        action_type = action_types.FOLD.value
+        raise_amount = 0
+        card_to_discard = -1
+        return action_type, raise_amount, card_to_discard
 
 
 # TODO: Implement the following agents
 class CallingStationAgent(Agent):
     # Always calls/checks
-    def name():
+    def __name__(self):
         return "CallingStationAgent"
 
     def act(self, observation, reward, terminated, truncated, info):
-        # observation["street"] == 1 marks the flop, where we discard a card
-        if observation["street"] == 1:
-            # discard & reveal arbitrary card
-            discard_card = 0
-        else:
-            discard_card = -1
-
-        my_bet = observation["opp_bet"]
-        return my_bet, discard_card
-
+        if observation["valid_actions"][action_types.CALL.value]:
+            action_type = action_types.CALL.value
+        elif observation["valid_actions"][action_types.CHECK.value]:
+            action_type = action_types.CHECK.value
+        raise_amount = 0
+        card_to_discard = -1
+        return action_type, raise_amount, card_to_discard
 
 class AllInAgent(Agent):
     # Always goes all in
-    def name():
+    def __name__(self):
         return "AllInAgent"
 
     def act(self, observation, reward, terminated, truncated, info):
-        # observation["street"] == 1 marks the flop, where we discard a card
-        if observation["street"] == 1:
-            # discard & reveal arbitrary card
-            discard_card = 0
-        else:
-            discard_card = -1
+        if observation["valid_actions"][action_types.RAISE.value]:
+            action_type = action_types.RAISE.value
+        elif observation["valid_actions"][action_types.CALL.value]:
+            action_type = action_types.CALL.value
+        elif observation["valid_actions"][action_types.CHECK.value]:
+            action_type = action_types.CHECK.value
 
-        my_bet = 100  # always put in the max pot from the start
-        return my_bet, discard_card
+        raise_amount = observation["max_raise"]
+        card_to_discard = -1
+        return action_type, raise_amount, card_to_discard
 
 
 class RandomAgent(Agent):
     # Randomly chooses an action
-    def name():
+    def __name__(self):
         return "RandomAgent"
 
     def act(self, observation, reward, terminated, truncated, info):
-        # randomly choose whether to fold, call, or raise
-        action = random.choice(
-            [action_types.CALL, action_types.FOLD, action_types.RAISE]
-        )
-
-        if action == action_types.FOLD:
-            return -1, -1
-
-        discard_card = -1
-        if observation["street"] == 1:
-            discard_card = random.choice([0, 1, 2])
-
-        if action == action_types.CALL:
-            # call or check
-            ammount_to_call = observation["opp_bet"]
-            return ammount_to_call, discard_card
-
-        if action == action_types.RAISE:
-            max_bet = 100
-            min_bet = min(100, observation["min_raise"] + observation["opp_bet"])
-            my_bet = random.randint(min_bet, max_bet)
-            return my_bet, discard_card
-
-        assert False
+        valid_actions = [n for i, n in enumerate(observation["valid_actions"]) if i == 1]
+        action_type = random.choice(valid_actions)
+        if action_type == action_types.RAISE.value:
+            raise_amount = random.randint(observation["min_raise"], observation["max_raise"])
+        else:
+            raise_amount = 0
+        card_to_discard = random.randint(-1, 1)
+        return action_type, raise_amount, card_to_discard
 
 
-class ProbabilityAgent(Agent):
-    # Chooses an action based on the probability of winning
-    def name():
-        return "ProbabilityAgent"
-
-    def act(self, observation, reward, terminated, truncated, info):
-        # treys has an implementation that could be odds
-        # it's defined as percentage rank among all hands
-        # not sure if it's able to take in extra info to reduce the
-        # pool of all hands by the flop discards though
-        # so we might have to do it ourselves
-        return -1, -1
-
-all_agent_classes = (FoldAgent, CallingStationAgent, AllInAgent, RandomAgent, ProbabilityAgent)
+all_agent_classes = (FoldAgent, CallingStationAgent, AllInAgent, RandomAgent)

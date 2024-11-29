@@ -1,9 +1,8 @@
-from abc import ABC, abstractmethod
-from typing import Any, List, Tuple, TypedDict
-
 import logging
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from abc import ABC, abstractmethod
+from typing import Any, List, Tuple, TypedDict
 from pydantic import BaseModel
 
 
@@ -43,9 +42,9 @@ class ActionResponse(BaseModel):
 
 
 class Agent(ABC):
-    def __init__(self, logger: logging.Logger):
+    def __init__(self, logger: logging.Logger=None):
         self.app = FastAPI()
-        self.logger = logger
+        self.logger = logger or logging.getLogger(__name__)
         self.add_routes()
 
     @abstractmethod

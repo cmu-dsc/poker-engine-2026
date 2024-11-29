@@ -8,7 +8,6 @@ https://stable-baselines3.readthedocs.io/en/master/guide/custom_env.html
 Keep in mind gym doesn't inherently support multi-agent environments.
 We will have to use the Tuple space to represent the observation space and
 action space for each agent.
-
 """
 
 import logging
@@ -22,308 +21,321 @@ from treys import Card, Evaluator
 
 
 class PokerEnv(gym.Env):
+    SMALL_BLIND_PLAYER = 0
+    BIG_BLIND_PLAYER = 1
+    MAX_PLAYER_BET = 100
+
+    RANKS = "23456789A"
+    SUITS = "dhs"  # diamonds hearts spade
+
     @staticmethod
     def int_to_card(card_int: int):
         """
         Convert from our encoding of a card, an integer on [0, 52)
         to the trey's encoding of a card, an integer desiged for fast lookup & comparison
         """
-        RANKS = "23456789TJQKA"
-        SUITS = "cdhs"  # clubs diamonds hearts spade
-        rank = RANKS[card_int % 13]
-        suit = SUITS[card_int // 13]
-        return Card.new(rank + suit)
+        return Card.new(PokerEnv.int_card_to_str(card_int))
+
+    @staticmethod
+    def int_card_to_str(card_int: int):
+        RANKS, SUITS = PokerEnv.RANKS, PokerEnv.SUITS
+        rank = RANKS[card_int % len(RANKS)]
+        suit = SUITS[card_int // len(RANKS)]
+        return rank + suit
 
     class ActionType(Enum):
-        FOLD = 1
-        RAISE = 2
-        CHECK = 3
-        CALL = 4
+        FOLD = 0
+        RAISE = 1
+        CHECK = 2
+        CALL = 3
+        DISCARD = 4
         INVALID = 5
 
-    SMALL_BIND = 1
-    BIG_BLIND = 2
-
-    DISCARD_CARD_POS = 0
-
-    NO_DISCARD = -1
-
-    LOG_FREQUENCY = 25
-
-    def __init__(self, num_games, logger=None):
+    def __init__(self, logger=None, small_blind_amount=1):
         super().__init__()
-        self.num_games = num_games
         self.logger = logger or logging.getLogger(__name__)
 
+        self.small_blind_amount = small_blind_amount
+        self.big_blind_amount = small_blind_amount * 2
+        self.min_raise = self.big_blind_amount
+        self.acting_agent = PokerEnv.SMALL_BLIND_PLAYER
+        self.last_street_bet = None
+        # Card evaluator from treys
         self.evaluator = Evaluator()
 
-        # Action space is a Tuple (total_bet, card_to_discard)
-        # where action is a Discrete(4) and amount is a Discrete(400)
-        # If bet_amount =< opp_bet, it is considered as folding
-        # If bet_amount > opp_bet, it is considered as raising (must be a legal raise)
-        # If bet_amount == opp_bet, it is considered as calling
-        # Card to discard and show is only relevant in the discard game.
-        # Discrete(4) cuz we have 3 cards.
-        # Keep in Mind: THIS IS Cumulative betting
-        self.action_space = spaces.Tuple([spaces.Discrete(102, start=-1), spaces.Discrete(4, start=-1)])
+        # Action space is a Tuple (action_type, raise_amount, card_to_discard)
+        # where action is a Discrete(4), raise_amount is a Discrete(100), and card_to_discard is a Discrete(3) (-1 means no card is discarded)
+        self.action_space = spaces.Tuple([
+            spaces.Discrete(len(self.ActionType) - 1), # user can pass any besides INVALID
+            spaces.Discrete(self.MAX_PLAYER_BET, start=1), spaces.Discrete(3, start=-1)])
 
-        # Card space is a Discrete(53), -1 means the card is not shown
-        cards_space = spaces.Discrete(53, start=-1)
+        # Card space is a Discrete(28), -1 means the card is not shown
+        cards_space = spaces.Discrete((len(self.SUITS) * len(self.RANKS)) + 1, start=-1)
 
         # Single observation space is a Dict.
-        # Since we have two players, turn is a Discrete(2)
-        # Make sure to check (turn == agent_num) before taking an action
+        # Since we have two players, acting_agent is a Discrete(2)
+        # Make sure to check (acting_agent == agent_num) before taking an action
         # opp_shown_card is "0" if the opp's card is not shown
         # Two players, so the observation space is a Tuple of two single_observation_spaces
         observation_space_one_player = spaces.Dict(
             {
                 "street": spaces.Discrete(4),
-                "turn": spaces.Discrete(2),
-                "my_cards": spaces.Tuple([cards_space for _ in range(3)]),
+                "acting_agent": spaces.Discrete(2),
+                "my_cards": spaces.Tuple([cards_space for _ in range(2)]),
                 "community_cards": spaces.Tuple([cards_space for _ in range(5)]),
-                "my_bet": spaces.Discrete(100, start=0),
-                "opp_bet": spaces.Discrete(100, start=0),
-                "my_bankroll": spaces.Box(low=-1, high=1, shape=(1,)),  # Normalized bankroll div by 1e4 or something idk
-                "opp_shown_cards": spaces.Tuple([cards_space for _ in range(2)]),
-                "game_num": spaces.Discrete(self.num_games, start=1),
-                "min_raise": spaces.Discrete(100, start=2),
+                "my_bet": spaces.Discrete(self.MAX_PLAYER_BET, start=1),
+                "opp_bet": spaces.Discrete(self.MAX_PLAYER_BET, start=1),
+                "opp_discarded_card": cards_space,
+                "opp_drawn_card": cards_space,
+                "min_raise": spaces.Discrete(self.MAX_PLAYER_BET, start=2),
+                "max_raise": spaces.Discrete(self.MAX_PLAYER_BET, start=2),
+                "valid_actions": spaces.MultiBinary(len(self.ActionType) - 1),
             }
         )
 
         # Since we have two players, the observation space is a tuple of
         # (observation_space_one_player, observation_space_one_player)
-        self.observation_space = spaces.Tuple([observation_space_one_player for _ in range(2)])
-
-        self.player_cards = (None, None)
-        self.community_cards = []
-        self.bets = [None, None]
-        self.shown_cards = (None, None)
+        self.observation_space = spaces.Tuple(
+            [observation_space_one_player for _ in range(2)]
+        )
 
         # New episode
         self.reset(seed=int.from_bytes(os.urandom(32)))
+
+    def _get_valid_actions(self, player_num: int):
+        valid_actions = [1, 1, 1, 1, 1]
+        # You can't check if the other player has a larger bet
+        if self.bets[player_num] < self.bets[1 - player_num]:
+            valid_actions[self.ActionType.CHECK.value] = 0
+        # You can't call if you have an equal bet
+        if self.bets[player_num] == self.bets[1 - player_num]:
+            valid_actions[self.ActionType.CALL.value] = 0
+        # You can't discard if you have already discarded
+        if self.discarded_cards[player_num] != -1:
+            valid_actions[self.ActionType.DISCARD.value] = 0
+        # You can discard only in the street (0,1)
+        if self.street > 1:
+            valid_actions[self.ActionType.DISCARD.value] = 0
+        
+        if (max(self.bets)) == self.MAX_PLAYER_BET:
+            valid_actions[self.ActionType.RAISE.value] = 0
+
+        return valid_actions
 
     def _get_single_player_obs(self, player_num: int):
         """
         Returns the observation for the player_num player.
         """
-        num_cards_to_reveal = -1
         if self.street == 0:
             num_cards_to_reveal = 0
         else:
             num_cards_to_reveal = self.street + 2
 
-        return {
+        obs = {
             "street": self.street,
-            "turn": self.turn,
+            "acting_agent": self.acting_agent,
             "my_cards": self.player_cards[player_num],
-            "community_cards": self.community_cards[:num_cards_to_reveal],
+            "community_cards": self.community_cards[:num_cards_to_reveal] + [
+                -1 for _ in range(5 - num_cards_to_reveal)
+            ],
             "my_bet": self.bets[player_num],
             "opp_bet": self.bets[1 - player_num],
-            "my_bankroll": self.bankrolls[player_num],
-            "opp_shown_cards": self.shown_cards[1 - player_num],
-            "game_num": self.game_num,
+            "opp_discarded_card": self.discarded_cards[1 - player_num],
+            "opp_drawn_card": self.drawn_cards[1 - player_num],
+            "my_discarded_card": self.discarded_cards[player_num],
+            "my_drawn_card": self.drawn_cards[player_num],
             "min_raise": self.min_raise,
+            "max_raise": self.MAX_PLAYER_BET - max(self.bets),
+            "valid_actions": self._get_valid_actions(player_num),
         }
+        info = {
+            "player_cards": [self.int_card_to_str(card) for card in obs["my_cards"] if card != -1],
+            "community_cards": [self.int_card_to_str(card) for card in obs["community_cards"] if card != -1],
+        }
+        return obs, info
 
-    def _get_obs(self, winner):
+    def _get_obs(self, winner, invalid_action=False):
         """
         Returns the observation for both players.
         """
-        observation = (self._get_single_player_obs(0), self._get_single_player_obs(1))
+        obs0, info0 = self._get_single_player_obs(0)
+        obs1, info1 = self._get_single_player_obs(1)
         if winner == 0:
             reward = (min(self.bets), -min(self.bets))
         elif winner == 1:
             reward = (-min(self.bets), min(self.bets))
         else:
             reward = (0, 0)
-        terminated = self.game_num > self.num_games
+        terminated = winner is not None
         truncated = False
-        info = None
-        return observation, reward, terminated, truncated, info
+        info = {
+            "player_0_cards": info0["player_cards"],
+            "player_1_cards": info1["player_cards"],
+            "community_cards": info0["community_cards"],
+            "invalid_action": invalid_action
+        }
+        return (obs0, obs1), reward, terminated, truncated, info
 
-    def _update_bankrolls(self, winner):
-        """
-        End the game, update the bankrolls
-        winner == -1 means a tie
-        """
-        assert -1 <= winner <= 1
-        if winner >= 0:
-            self.bankrolls[winner] += min(self.bets)
-            self.bankrolls[1 - winner] -= min(self.bets)
-
-    def _start_new_game(self):
-        # Rotate the small blind
-        self.small_blind_player = 1 - self.small_blind_player
-
-        # Small blind starts
-        self.turn = self.small_blind_player
-
-        # Deal the cards
-        cards = np.random.choice(52, 3 + 3 + 5, replace=False)
-        self.player_cards = [cards[:3], cards[3:6]]
-        self.community_cards = cards[6:]
-
-        # Reset the bets, and no cards are shown yet
-        self.bets[self.small_blind_player] = self.SMALL_BIND
-        self.bets[1 - self.small_blind_player] = self.BIG_BLIND
-        self.shown_cards = [np.array([-1, -1, -1]), np.array([-1, -1, -1])]
-        self.min_raise = self.BIG_BLIND
-
-        self.street = 0
-
-        self.game_num += 1
-
-        if self.game_num % self.LOG_FREQUENCY == 0:
-            self.logger.info(f"Starting game {self.game_num} of {self.num_games}")
-            self.logger.info(f"Current bankrolls - Player 0: {self.bankrolls[0]}, Player 1: {self.bankrolls[1]}")
+    def _draw_card(self):
+        drawn_card = self.cards[0]
+        self.cards = self.cards[1:]
+        return drawn_card
 
     def reset(self, *, seed=None, options=None):
         """
         Resets the entire game.
-        """
-        # match initialization
+        Default is random deal, but options can be provided to set the initial state.
 
+        options is a dict with the following keys:
+        - cards: a list of 27 cards to be used in the game
+        """
         super().reset(seed=seed)
-
-        # cumulative winnings across all games
-        self.bankrolls = [0, 0]
-        self.game_num = 0  # start_game will put to 1
-        self.small_blind_player = 1  # start_game will put to 0
-
-        # game initialization
-        self._start_new_game()
-
-        obs = (self._get_single_player_obs(0), self._get_single_player_obs(1))
-        return obs, None
-
-    def _get_action_type(self, action) -> ActionType:
-        """
-        Validates the action taken by the player.
-        """
-        new_bet, card_to_discard = action
-
-        other_player = 1 - self.turn
-
-        # detect if bet is raise, fold, or check
-        other_player_old_bet = self.bets[other_player]
-
-        # amount curr player is raising
-        if new_bet < other_player_old_bet:
-            return self.ActionType.FOLD
-        elif new_bet == other_player_old_bet:
-            if new_bet == self.bets[self.turn]:
-                return self.ActionType.CHECK
-            else:
-                return self.ActionType.CALL
-        # raise
-        raised_by = new_bet - other_player_old_bet
-        if raised_by < self.min_raise:
-            self.logger.error(f"Raise must be at least {self.min_raise} but was {raised_by}")
-            return self.ActionType.INVALID
-
-        # Discard has to be done in the flop and not any other streets
-        if self.street == 1:
-            # on the flop, must be valid discard
-            # TODO: What if a player decides to fold? Do they still have to show their cards?
-            if card_to_discard < 0 and self.ACTION_TYPE != self.ActionType.FOLD:
-                self.logger.error("Did not discard a card during the flop")
-                return self.ActionType.INVALID
+        if options is not None:
+            self.cards = options["cards"]
         else:
-            if card_to_discard != self.NO_DISCARD:
-                self.logger.error("Discarded a card when it wasn't the flop")
-                return self.ActionType.INVALID
+            self.cards = np.arange(27)
+            np.random.shuffle(self.cards)
 
-        return self.ActionType.RAISE
+        self.player_cards = [[self._draw_card() for _ in range(2)] for _ in range(2)]
+        self.community_cards = [self._draw_card() for _ in range(5)]
+
+        self.discarded_cards = [-1 for _ in range(2)]
+        self.drawn_cards = [-1 for _ in range(2)]
+        # p0 is the small blind player, p1 is the big-blind player
+        self.bets = [self.small_blind_amount, self.big_blind_amount]
+        self.acting_agent = 0
+        self.street = 0
+        self.min_raise = self.big_blind_amount
+        self.last_street_bet = 0
+
+        # gen observation, extract info
+        obs0, info0 = self._get_single_player_obs(0)
+        obs1, info1 = self._get_single_player_obs(1)
+
+        info = {
+            "player_0_cards": info0["player_cards"],
+            "player_1_cards": info1["player_cards"],
+            "community_cards": info0["community_cards"],
+        }
+        return (obs0, obs1), info
 
     def _next_street(self):
         """
         Update to the next street of the game.
         """
         self.street += 1
-        self.min_raise = self.BIG_BLIND
-        self.turn = self.small_blind_player
+        self.min_raise = self.big_blind_amount
+        assert self.bets[0] == self.bets[1], self.logger.log(f"Bet amounts are not equal: {self.bets}")
+        self.last_street_bet = self.bets[0]
+        self.acting_agent = 0
 
     def _get_winner(self):
+        """
+        Returns the winner of the game.
+        """
         board_cards = list(map(self.int_to_card, self.community_cards))
-        player_1_cards = list(map(self.int_to_card, [c for c in self.player_cards[0] if c != -1]))
-        player_2_cards = list(map(self.int_to_card, [c for c in self.player_cards[1] if c != -1]))
-        assert len(player_1_cards) == 2 and len(player_2_cards) == 2 and len(board_cards) == 5
-        player_1_hand_score = self.evaluator.evaluate(
+        player_0_cards = list(
+            map(self.int_to_card, [c for c in self.player_cards[0] if c != -1])
+        )
+        player_1_cards = list(
+            map(self.int_to_card, [c for c in self.player_cards[1] if c != -1])
+        )
+        assert (
+            len(player_0_cards) == 2
+            and len(player_1_cards) == 2
+            and len(board_cards) == 5
+        )
+        player_0_hand_rank = self.evaluator.evaluate(
+            player_0_cards,
+            board_cards,
+        )
+        player_1_hand_rank = self.evaluator.evaluate(
             player_1_cards,
             board_cards,
         )
-        player_2_hand_score = self.evaluator.evaluate(
-            player_2_cards,
-            board_cards,
-        )
+
+        self.logger.debug(f"(get winner) Player 0 cards: {list(map(Card.int_to_str, player_0_cards))}; Player 1 cards: {list(map(Card.int_to_str, player_1_cards))}")
+        self.logger.debug(f"Determined winner based on hand scores; p0 score: {player_0_hand_rank}; p1 score: {player_1_hand_rank}")
+
         # showdown
-        if player_1_hand_score == player_2_hand_score:
+        if player_0_hand_rank == player_1_hand_rank:
             winner = -1  # tie
-        elif player_1_hand_score < player_2_hand_score:
+        elif player_1_hand_rank < player_0_hand_rank:
             winner = 1
         else:
             winner = 0
         return winner
 
-    def step(self, action):
+    def step(self, action: tuple[int, int, int]):
         """
         Takes a step in the game, given the action taken by the active player.
+        
+        `action`: (action_type, raise_amount, card_to_discard)
+            - `action_type`: `int`, index of the action type
+            - `raise_amount`: `int`, how much to raise, or 0 for a check or call
+            - `card_to_discard`: `int`, index of the card which you would like to discard (0, or 1) or -1
         """
-        bet_amount, card_to_discard = action
-        action_type = self._get_action_type(action)
-        self.logger.debug(f"Action type: {action_type}")
-        new_game = False
-        new_street = False
+        action_type, raise_amount, card_to_discard = action
+        valid_actions = self._get_valid_actions(self.acting_agent)
+        self.logger.debug(f"Action type: {action_type}, Valid actions: {valid_actions}, Street: {self.street}, Bets: {self.bets}")
+
+        if not valid_actions[action_type]:
+            self.logger.error(f"Invalid action: {action_type}")
+            action_type = self.ActionType.INVALID.value
+
+        if action_type == self.ActionType.RAISE.value and not (self.min_raise <= raise_amount <= (self.MAX_PLAYER_BET - max(self.bets))):
+            self.logger.error(f"Raise must be between [{self.min_raise}, {self.MAX_PLAYER_BET - max(self.bets)}] but was {raise_amount}")
+            action_type = self.ActionType.INVALID.value
+
         winner = None
 
-        # Discard phase
-        if self.street == 1 and self.shown_cards[self.turn][self.DISCARD_CARD_POS] == -1:
-            self.shown_cards[self.turn][self.DISCARD_CARD_POS] = self.player_cards[self.turn][card_to_discard]
-            self.player_cards[self.turn][card_to_discard] = -1
-
-        # We consider invalid actions as folding
-        if action_type == self.ActionType.INVALID:
-            action_type = self.ActionType.FOLD
-
-        if action_type == self.ActionType.FOLD:
-            winner = 1 - self.turn
-            self._update_bankrolls(winner)  # by folding, we must lose
-            new_game = True
-        elif action_type == self.ActionType.CALL:
-            self.bets[self.turn] = self.bets[1 - self.turn]
-            new_street = True
-        elif action_type == self.ActionType.CHECK:
-            if self.turn == 1 - self.small_blind_player:
+        new_street = False
+        if action_type in (self.ActionType.FOLD.value, self.ActionType.INVALID.value):
+            # We consider invalid actions as a fold
+            self.logger.debug(f"Player {self.acting_agent} Folded")
+            winner = 1 - self.acting_agent
+        elif action_type == self.ActionType.CALL.value:
+            self.bets[self.acting_agent] = self.bets[1 - self.acting_agent]
+            if not (self.street == 0 and self.acting_agent == self.SMALL_BLIND_PLAYER):
+                # on the first street, the little blind can "call" the big blind's bet of 2
+                assert self.bets[self.acting_agent] > self.big_blind_amount
+                new_street = True
+        elif action_type == self.ActionType.CHECK.value:
+            if self.acting_agent == PokerEnv.BIG_BLIND_PLAYER:
                 new_street = True  # big blind checks mean next street
-        elif action_type == self.ActionType.RAISE:
-            self.bets[self.turn] = bet_amount
-            self.min_raise = max(self.min_raise, bet_amount - self.bets[1 - self.turn])
+        elif action_type == self.ActionType.RAISE.value:
+            assert (self.bets[1-self.acting_agent] >= self.bets[self.acting_agent]), self.logger.log(
+                "Expected the opponent to have bet at least as much as current player, given current player is raising")
+            self.bets[self.acting_agent] = self.bets[1-self.acting_agent] + raise_amount
+            raise_so_far = (self.bets[1-self.acting_agent] - self.last_street_bet)
+            
+            max_raise = self.MAX_PLAYER_BET - max(self.bets)
+            min_raise_no_limit = raise_so_far + raise_amount
+            self.min_raise = min(min_raise_no_limit, max_raise)
         else:
-            assert False
+            # Must be DISCARD at this point
+            assert action_type == self.ActionType.DISCARD.value, f"Unexpected action type: {action_type}"
+            if card_to_discard != -1:
+                self.discarded_cards[self.acting_agent] = self.player_cards[
+                    self.acting_agent
+                ][card_to_discard]
+                drawn_card = self._draw_card()
+                self.drawn_cards[self.acting_agent] = drawn_card
+                self.player_cards[self.acting_agent][card_to_discard] = drawn_card
 
         if new_street:
             self._next_street()
-            if self.street > 3 and not new_game:
+            if self.street > 3:
                 winner = self._get_winner()
-                self._update_bankrolls(winner)
-                new_game = True
 
-        if not new_game and not new_street:
-            self.turn = 1 - self.turn
+        if not new_street and action_type != self.ActionType.DISCARD.value:
+            self.acting_agent = 1 - self.acting_agent
 
-        obs, reward, terminated, truncated, info = self._get_obs(winner)
+        obs, reward, terminated, truncated, info = self._get_obs(winner, action_type == self.ActionType.INVALID.value)
         if terminated:
-            self.logger.info(f"Game is terminated. Final bankrolls: {self.bankrolls}")
-
-        if new_game and self.game_num % self.LOG_FREQUENCY == 0:
-            self.logger.info(f"Game {self.game_num} ended. Winner: Player {winner if winner != -1 else 'Tie'}")
-            self.logger.info(f"Updated bankrolls - Player 0: {self.bankrolls[0]}, Player 1: {self.bankrolls[1]}")
-
-        if new_game:
-            self._start_new_game()
-
+            self.logger.info(f"Game is terminated. Final rewards: {reward}")
+            self.logger.debug(
+                f"Game is terminated. P0 cards: {list(map(self.int_card_to_str, self.player_cards[0]))}; P1 cards: {list(map(self.int_card_to_str, self.player_cards[1]))}; board cards: {list(map(self.int_card_to_str, self.community_cards))}")
         return obs, reward, terminated, truncated, info
 
 
-if __name__ == "__main__":
-    env = PokerEnv(100)

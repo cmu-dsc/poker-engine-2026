@@ -21,3 +21,9 @@
    ```bash
    pip install -r requirements.txt
    ```
+
+## Running Tests
+
+```bash
+pytest --cov=gym_env --cov-report=term-missing --cov-report=html
+```
