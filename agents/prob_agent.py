@@ -12,7 +12,6 @@ class ProbabilityAgent(Agent):
     def __name__(self):
         return "ProbabilityAgent"
 
-    # Chooses an action based on the probability of winning
     def __init__(self, logger=None):
         super().__init__(logger)
         self.evaluator = Evaluator()
