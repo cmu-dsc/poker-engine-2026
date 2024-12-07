@@ -135,7 +135,7 @@ class PokerEnv(gym.Env):
             num_cards_to_reveal = 0
         else:
             num_cards_to_reveal = self.street + 2
-
+            
         obs = {
             "street": self.street,
             "acting_agent": self.acting_agent,
@@ -151,6 +151,10 @@ class PokerEnv(gym.Env):
             "max_raise": self.MAX_PLAYER_BET - max(self.bets),
             "valid_actions": self._get_valid_actions(player_num),
         }
+        # All in situation
+        if obs["min_raise"] > obs["max_raise"]:
+            obs["min_raise"] = obs["max_raise"]
+        
         info = {
             "player_cards": [self.int_card_to_str(card) for card in obs["my_cards"] if card != -1],
             "community_cards": [self.int_card_to_str(card) for card in obs["community_cards"] if card != -1],
