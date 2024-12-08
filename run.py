@@ -89,48 +89,6 @@ def call_agent_api(method: str, base_url: str, endpoint: str, payload: Dict[str,
             logger.info(f"Backing off for {delay} seconds before retry {attempt + 1}")
             time.sleep(delay)
 
-
-def run_local_match(agent1: Agent, agent2: Agent, num_games: int = 1000, logger: logging.Logger = None) -> float:
-    """
-    Run a local match between two agents.
-
-    Args:
-        agent1 (Agent): The first agent instance.
-        agent2 (Agent): The second agent instance.
-        num_games (int, optional): The number of games to play. Defaults to 1000.
-        logger (logging.Logger, optional): The logger object to use for logging.
-
-    Returns:
-        float: The net bankroll of agent1 vs agent2.
-    """
-    env = PokerEnv(num_hands=num_games, logger=logger)
-    (obs0, obs1), info = env.reset()
-    bot0, bot1 = agent1, agent2
-
-    reward0 = reward1 = 0
-    truncated = None
-
-    logger.info(f"Starting a new match with {num_games} games")
-
-    terminated = False
-    while not terminated:
-        print_game_state(obs0, obs1)
-
-        if obs0["acting_agent"] == 0:
-            action = bot0.act(obs0, reward0, terminated, truncated, info)
-            bot1.observe(obs1, reward1, terminated, truncated, info)
-        else:
-            action = bot1.act(obs1, reward1, terminated, truncated, info)
-            bot0.observe(obs0, reward0, terminated, truncated, info)
-
-        print(f"Bot {obs0['acting_agent']} did action {action}")
-
-        (obs0, obs1), (reward0, reward1), terminated, truncated, info = env.step(action=action)
-        print(f"Bot0 reward: {reward0}, Bot1 reward: {reward1}")
-
-    return obs0["my_bankroll"] - obs1["my_bankroll"]
-
-
 TIME_LIMIT_SECONDS = 420  # 7 minutes
 
 
@@ -309,22 +267,6 @@ def run_api_match(base_url_0: str, base_url_1: str, logger: logging.Logger, num_
         return get_match_result("error")
     finally:
         csv_file.close()  # Ensure the CSV file is properly closed
-
-
-def print_game_state(obs0: Dict[str, Any], obs1: Dict[str, Any]) -> None:
-    """
-    Print the current game state.
-
-    Args:
-        obs0 (Dict[str, Any]): Observation for the first agent.
-        obs1 (Dict[str, Any]): Observation for the second agent.
-    """
-    print("\n#####################")
-    print(f"Turn: {obs0['acting_agent']}")
-    print(f"Bot0 cards: {obs0['my_cards']}, Bot1 cards: {obs1['my_cards']}")
-    print(f"Community cards: {obs0['community_cards']}")
-    print(f"Bot0 bet: {obs0['my_bet']}, Bot1 bet: {obs1['my_bet']}")
-    print("#####################\n")
 
 
 def log_game_state(logger: logging.Logger, obs0: Dict[str, Any], obs1: Dict[str, Any]) -> None:
