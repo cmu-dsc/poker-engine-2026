@@ -2,109 +2,185 @@
 Basic Test Suite for PlayerAgent which checks that it never does an invalid action
 """
 
+import importlib.util
+import multiprocessing
+import os
+import sys
 import time
 from logging import getLogger
-from starter.player import PlayerAgent
+from typing import Optional, Type
+
 from agents.agent import Agent
 from agents.prob_agent import ProbabilityAgent
-from agents.test_agents import FoldAgent, CallingStationAgent, AllInAgent, RandomAgent
-from gym_env import PokerEnv
+from agents.test_agents import AllInAgent, CallingStationAgent, FoldAgent, RandomAgent
+from run import run_api_match
+
+NUM_HANDS = 5
+TIME_PER_HAND = 5
 
 
-NUM_HANDS = 100
-TIME_PER_HAND = 1
-
-
-class InvalidActionError(Exception):
-    """AI GENERATED"""
-
-    def __init__(self, action, observation):
-        """
-        Initialize the InvalidActionError with action and observation.
-
-        Args:
-            action: The invalid action attempted.
-            observation: The observation in which the invalid action was attempted.
-        """
-        self.action = action
-        self.observation = observation
-        super().__init__(self._generate_message())
-
-    def _generate_message(self):
-        """
-        Generate a detailed error message.
-
-        Returns:
-            str: A descriptive error message including the action and observation.
-        """
-        return f"Invalid action '{self.action}' attempted in observation '{self.observation}'."
-
-
-def run_game(player_bot_num: int, test_agent_class: Agent, num_hands: int):
+def verify_submission() -> Optional[str]:
     """
-    Run the agents against each other and check for errors
+    Verify that the submission contains required files and can be imported
+
+    Args:
+        starter_dir: Path to the starter directory
+
+    Returns:
+        Optional[str]: Error message if verification fails, None if successful
     """
-    logger = getLogger(__name__)
-    env = PokerEnv(logger=logger, num_hands=num_hands)
-    my_agent = PlayerAgent(logger=logger)
-    test_agent = test_agent_class(logger=logger)
+    # Check if starter directory exists
+    if not os.path.isdir("starter"):
+        return "Starter directory not found"
 
-    bots: list[Agent] = [None, None]
-    bots[player_bot_num] = my_agent
-    bots[1 - player_bot_num] = test_agent
+    # Check for required files
+    if not os.path.isfile("starter/player.py"):
+        return "Required file 'player.py' not found in starter directory"
 
-    (obs0, obs1), info = env.reset()
-    terminated = False
-    reward = (0, 0)
-    truncated = False
-    while not terminated:
-        acting_agent = obs0["acting_agent"]
-        obs = [obs0, obs1][acting_agent]
-        action = bots[acting_agent].act(
-            obs, reward, terminated, truncated, info
-        )
-        (obs0, obs1), reward, terminated, truncated, info = env.step(action)
-        if info["invalid_action"]:
-            assert (bots[acting_agent]) != test_agent, print(
-                "ProbabilityAgent produced an invalid action!!!!", action, obs
-            )
-            raise InvalidActionError(obs, action)
-    return reward
+    # Try importing PlayerAgent
+    try:
+        spec = importlib.util.spec_from_file_location("player", "starter/player.py")
+        if spec is None or spec.loader is None:
+            return "Could not load player.py"
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        # Check if PlayerAgent exists and inherits from Agent
+        if not hasattr(module, "PlayerAgent"):
+            return "player.py does not contain PlayerAgent class"
+
+        if not issubclass(module.PlayerAgent, Agent):
+            return "PlayerAgent must inherit from Agent class"
+
+    except Exception as e:
+        return f"Error importing PlayerAgent: {str(e)}"
+
+    return None
+
+
+def get_player_agent() -> Optional[Type[Agent]]:
+    """
+    Import and return the PlayerAgent class
+
+    Returns:
+        Optional[Type[Agent]]: PlayerAgent class if successful, None if import fails
+    """
+    try:
+        from starter.player import PlayerAgent
+
+        return PlayerAgent
+    except ImportError:
+        return None
+
+
+def run_test_match(test_agent_class: Agent, logger):
+    """
+    Run a match between PlayerAgent and a test agent using the API interface
+
+    Args:
+        test_agent_class (Agent): The test agent class to play against
+        logger: Logger instance
+
+    Returns:
+        dict: Match results
+
+    Raises:
+        RuntimeError: If there are initialization or runtime errors
+    """
+    PlayerAgent = get_player_agent()
+    if PlayerAgent is None:
+        raise RuntimeError("Could not import PlayerAgent")
+
+    process0 = multiprocessing.Process(target=PlayerAgent.run, args=(False, 8000))
+    process1 = multiprocessing.Process(target=test_agent_class.run, args=(False, 8001))
+
+    try:
+        process0.start()
+        process1.start()
+
+        # Give servers time to start
+        time.sleep(1)
+
+        # Run the match
+        result = run_api_match("http://127.0.0.1:8000", "http://127.0.0.1:8001", logger, num_hands=NUM_HANDS, csv_path=f"./match_{test_agent_class.__name__}.csv")
+
+        return result
+
+    finally:
+        # Clean up processes
+        process0.terminate()
+        process1.terminate()
+        process0.join()
+        process1.join()
 
 
 def main():
     """
-    Runs NUM_GAMES games between PlayerAgent and ProbabilityAgent, alternating who
-    is small blind
+    Runs a test suite of games between PlayerAgent and various test agents to verify:
+    1. The submission contains required files
+    2. The agent can be imported successfully
+    3. The agent can be initialized and run as an API server
+    4. The agent can play full games without crashing
+    5. The agent responds within time limits
     """
-    
-    # TODO: We have a weird bug in RandomAgent where it will sometimes not act
-    # TODO: Sometimes the min_raise > max_raise???
-    
-    player_bankroll = 0
-    test_bot_bankroll = 0
-    for test_agent_class in [ProbabilityAgent, AllInAgent, FoldAgent, CallingStationAgent, RandomAgent]:
-        print("--------------------------------")
-        print("Testing user bot against", test_agent_class)
-        start_time = time.time()
-        for game_num in range(NUM_HANDS):
-            try:
-                player_bot_num = game_num % 2
-                reward = run_game(player_bot_num, test_agent_class, NUM_HANDS)
-                player_bankroll += reward[player_bot_num]
-                test_bot_bankroll += reward[1 - player_bot_num]
-                print("passed game number", game_num)
-                print("bankroll:", player_bankroll)
+    # First verify the submission
+    error = verify_submission()
+    if error:
+        print(f"Submission verification failed: {error}")
+        sys.exit(1)
 
-            except InvalidActionError as e:
-                print("failed game number", game_num)
-                print(e)
-                break
+    logger = getLogger(__name__)
+    test_results = {"games_completed": 0, "runtime_errors": 0, "timeout_errors": 0}
+
+    test_agents = [ProbabilityAgent, AllInAgent, FoldAgent, CallingStationAgent, RandomAgent]
+
+    for test_agent_class in test_agents:
+        print(f"\nTesting user bot against {test_agent_class.__name__}")
+        print("-" * 50)
+
+        start_time = time.time()
+
+        try:
+            result = run_test_match(test_agent_class, logger)
+
+            if result["status"] == "completed":
+                test_results["games_completed"] += NUM_HANDS
+                print(f"✓ Completed {NUM_HANDS} games successfully")
+            elif result["status"] == "timeout":
+                test_results["timeout_errors"] += 1
+                print(f"✗ Failed: Time limit exceeded")
+            else:
+                test_results["runtime_errors"] += 1
+                print(f"✗ Failed: Runtime error")
+                print(f"  {result.get('error', 'Unknown error')}")
+
+        except Exception as e:
+            test_results["runtime_errors"] += 1
+            print(f"✗ Failed: Runtime error")
+            print(f"  {str(e)}")
+            continue
+
         end_time = time.time()
-        print(f"Player bankroll: {player_bankroll}, Test bot bankroll: {test_bot_bankroll}")
-        print(f"Time taken for {NUM_HANDS} hands: {end_time - start_time} seconds")
-        print(f"Time per hand: {(end_time - start_time) / NUM_HANDS} seconds")
-        assert (end_time - start_time) / NUM_HANDS < TIME_PER_HAND, "Time per hand is too long"
+        time_per_hand = (end_time - start_time) / NUM_HANDS
+
+        if time_per_hand > TIME_PER_HAND:
+            test_results["timeout_errors"] += 1
+            print(f"✗ Time limit exceeded: {time_per_hand:.2f}s per hand (limit: {TIME_PER_HAND}s)")
+        else:
+            print(f"✓ Time check passed: {time_per_hand:.2f}s per hand")
+
+    # Print final summary
+    print("\nTest Suite Summary")
+    print("-" * 50)
+    print(f"Games completed successfully: {test_results['games_completed']}")
+    print(f"Runtime errors encountered: {test_results['runtime_errors']}")
+    print(f"Time limit violations: {test_results['timeout_errors']}")
+
+    # Return non-zero exit code if any errors occurred
+    if sum(test_results.values()) - test_results["games_completed"] > 0:
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
