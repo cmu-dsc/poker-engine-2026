@@ -12,7 +12,7 @@ rm -rf "$temp_dir"
 mkdir -p "$temp_dir/agents" "$temp_dir/starter"
 
 # Copy files and folders to temporary directory, maintaining structure
-cp gym_env.py run.py requirements.txt "$temp_dir/"
+cp gym_env.py match.py run.py agent_test.py requirements.txt "$temp_dir/"
 cp -r agents/* "$temp_dir/agents/"
 cp -r starter/* "$temp_dir/starter/"
 

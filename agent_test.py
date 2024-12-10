@@ -13,7 +13,7 @@ from typing import Optional, Type
 from agents.agent import Agent
 from agents.prob_agent import ProbabilityAgent
 from agents.test_agents import AllInAgent, CallingStationAgent, FoldAgent, RandomAgent
-from run import run_api_match
+from match import run_api_match
 
 NUM_HANDS = 5
 TIME_PER_HAND = 5
