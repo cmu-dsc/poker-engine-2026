@@ -1,3 +1,4 @@
+# installs for running the engine
 fastapi~=0.114.0
 gym~=0.26.0
 numpy~=1.26.0
@@ -6,6 +7,13 @@ pydantic~=2.9.0
 requests~=2.32.0
 treys~=0.1.0
 uvicorn~=0.30.0
+
+# installs for running pytest coverage
+pytest==8.3.3
+pytest-cov==6.0.0
+pytest-cover==3.0.0
+pytest-coverage==0.0
+pytest-asyncio==0.25.3
 
 # Optional Additional Libraries
 # These are installed on the server for you to use, but optional to run locally.
