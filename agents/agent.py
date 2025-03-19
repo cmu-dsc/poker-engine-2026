@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+import tempfile
 from abc import ABC, abstractmethod
 from typing import Any, List, Tuple, TypedDict
 
@@ -58,7 +59,9 @@ class Agent(ABC):
 
         match_id = os.getenv("MATCH_ID", "unknown")
         player_id = os.getenv("PLAYER_ID", "unknown")
-        log_path = f"/tmp/match_{match_id}_{player_id}.log"
+        temp_dir = os.path.join(tempfile.gettempdir(), "poker-engine-logs")
+        os.makedirs(temp_dir, exist_ok=True)
+        log_path = os.path.join(temp_dir, f"match_{match_id}_{player_id}.log")
 
         handler = logging.FileHandler(log_path)
         formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
