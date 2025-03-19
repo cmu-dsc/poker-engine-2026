@@ -121,7 +121,7 @@ class PokerEnv(gym.Env):
         if self.street > 1:
             valid_actions[self.ActionType.DISCARD.value] = 0
 
-        if (max(self.bets)) == self.MAX_PLAYER_BET:
+        if (self.MAX_PLAYER_BET - max(self.bets)) < self.min_raise:
             valid_actions[self.ActionType.RAISE.value] = 0
 
         return valid_actions
