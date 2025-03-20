@@ -29,11 +29,13 @@ def main():
     # Create processes using the configuration
     process0 = multiprocessing.Process(
         target=bot0_class.run,
-        args=(False, config['bot0']['port'])
+        args=(False, config['bot0']['port']),
+        kwargs = {"player_id": config['bot0']['player_id']}
     )
     process1 = multiprocessing.Process(
         target=bot1_class.run,
-        args=(False, config['bot1']['port'])
+        args=(False, config['bot1']['port']),
+        kwargs = {"player_id": config['bot1']['player_id']}
     )
 
     process0.start()

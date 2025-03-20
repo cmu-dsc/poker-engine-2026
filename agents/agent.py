@@ -47,8 +47,9 @@ class ActionResponse(BaseModel):
 
 
 class Agent(ABC):
-    def __init__(self, stream: bool = False):
+    def __init__(self, stream: bool = False, player_id: str = None):
         self.app = FastAPI()
+        self.player_id = player_id
         self.logger = self._setup_logger(stream)
         self.add_routes()
 
@@ -145,8 +146,10 @@ class Agent(ABC):
                 raise HTTPException(status_code=500, detail=str(e))
 
     @classmethod
-    def run(cls, stream: bool = False, port: int = 8000, host: str = "0.0.0.0"):
+    def run(cls, stream: bool = False, port: int = 8000, host: str = "0.0.0.0", player_id: str = None):
         """Run an API-based bot on a specified port."""
+        if player_id is not None:
+            os.environ["PLAYER_ID"] = player_id
         bot = cls(stream)
         bot.logger.info(f"Starting agent server on {host}:{port}")
         uvicorn.run(bot.app, host=host, port=port, log_level="info", access_log=False)
