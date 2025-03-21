@@ -49,6 +49,12 @@ class AgentFailureTracker:
 failure_tracker = AgentFailureTracker()
 
 
+def get_street_name(street_num: int) -> str:
+    """Convert numeric street value to human-readable name"""
+    street_names = {0: "Pre-Flop", 1: "Flop", 2: "Turn", 3: "River"}
+    return street_names.get(street_num, f"Unknown-{street_num}")
+
+
 def prepare_payload(
     obs: Dict[str, Any],
     reward: float,
@@ -158,6 +164,8 @@ def run_api_match(
     logger: logging.Logger,
     num_hands: int = 1000,
     csv_path: str = "./match.csv",
+    team_0_name: str = "Team 0",
+    team_1_name: str = "Team 1",
 ) -> Dict[str, Any]:
     """
     Run a match of multiple hands between two API-based agents.
@@ -182,6 +190,9 @@ def run_api_match(
     ]
 
     with open(csv_path, "w", newline="") as csv_file:
+        # Comment header
+        csv_file.write(f"# Team 0: {team_0_name}, Team 1: {team_1_name}\n")
+
         writer = csv.DictWriter(csv_file, fieldnames=csv_headers)
         writer.writeheader()
 
@@ -193,7 +204,9 @@ def run_api_match(
                 bankrolls[0] += res["bot0_reward"]
                 bankrolls[1] += res["bot1_reward"]
                 if hand_number % 50 == 0:
-                    logger.info(f"Hand number: {hand_number}, Bot0 bankroll: {bankrolls[0]}, Bot1 bankroll: {bankrolls[1]}")
+                    logger.info(
+                        f"Hand number: {hand_number}, Bot0 bankroll: {bankrolls[0]}, Bot1 bankroll: {bankrolls[1]}"
+                    )
             except TimeoutError as te:
                 # Determine winner based on which player exceeded time
                 winner = 1 if "Player 0" in str(te) else 0
@@ -218,7 +231,9 @@ time_used_0 = 0.0
 time_used_1 = 0.0
 
 
-def play_hand(env: PokerEnv, base_url_0: str, base_url_1: str, logger: logging.Logger, writer: csv.DictWriter, hand_number: int):
+def play_hand(
+    env: PokerEnv, base_url_0: str, base_url_1: str, logger: logging.Logger, writer: csv.DictWriter, hand_number: int
+):
     """
     Play a single hand in the given environment instance.
     This function loops until the single hand terminates.
@@ -264,7 +279,7 @@ def play_hand(env: PokerEnv, base_url_0: str, base_url_1: str, logger: logging.L
         # Log action
         current_state = {
             "hand_number": hand_number,
-            "street": obs0["street"],
+            "street": get_street_name(obs0["street"]),
             "active_team": obs0["acting_agent"],
             "team_0_bankroll": bankrolls[0],
             "team_1_bankroll": bankrolls[1],
@@ -363,4 +378,3 @@ def format_bankroll_log(game_number: int, bankrolls: list) -> str:
         "bot1_bankroll": int(bankrolls[1]),
     }
     return json.dumps(bankroll_data)
-    
