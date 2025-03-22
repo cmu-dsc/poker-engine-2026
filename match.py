@@ -205,7 +205,7 @@ def run_api_match(
                 bankrolls[1] += res["bot1_reward"]
                 if hand_number % 50 == 0:
                     logger.info(
-                        f"Hand number: {hand_number}, Bot0 bankroll: {bankrolls[0]}, Bot1 bankroll: {bankrolls[1]}"
+                        f"Hand number: {hand_number}, {team_0_name} bankroll: {bankrolls[0]}, {team_1_name} bankroll: {bankrolls[1]}"
                     )
             except TimeoutError as te:
                 # Determine winner based on which player exceeded time
@@ -222,7 +222,9 @@ def run_api_match(
                 return get_match_result("error", error=str(e))
 
         logger.info("All hands completed")
-        logger.info(f"Final results - Bot0 bankroll: {bankrolls[0]}, Bot1 bankroll: {bankrolls[1]}")
+        logger.info(f"Final results - {team_0_name} bankroll: {bankrolls[0]}, {team_1_name} bankroll: {bankrolls[1]}")
+        logger.info(f"Time used - {team_0_name}: {time_used_0:.2f} seconds, {team_1_name}: {time_used_1:.2f} seconds")
+        logger.info(f"Time limit: {TIME_LIMIT_SECONDS} seconds")
 
         return get_match_result("completed", rewards=(bankrolls[0], bankrolls[1]))
 

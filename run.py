@@ -47,6 +47,8 @@ def main():
         f"http://localhost:{config['bot1']['port']}",
         logger,
         csv_path=config['match_settings']['csv_output_path'],
+        team_0_name=bot0_class.__name__,
+        team_1_name=bot1_class.__name__
     )
     logger.info(f"Match result: {result}")
 
