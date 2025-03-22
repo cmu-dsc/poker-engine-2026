@@ -8,7 +8,7 @@ from typing import Any, List, Tuple, TypedDict
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-
+import traceback
 
 # I used a typedDict instead of a pydantic model because it
 # was giving me issues.
@@ -87,6 +87,24 @@ class Agent(ABC):
         """Return the name of the agent. Must be implemented by subclasses."""
         pass
 
+    def get_bot_action(self, observation, reward, terminated, truncated, info) -> tuple[int, int]:
+        """
+        Given the current state, return the action to take.
+        """
+        try:
+            return self.act(observation, reward, terminated, truncated, info)
+        except Exception as e:
+            self.logger.error(f"Bot raised an error during act: {str(e)}.\n{traceback.format_exc()}")
+            print(f"Bot raised an error during act: {str(e)}.\n{traceback.format_exc()}")
+
+    def do_bot_observation(self, observation, reward, terminated, truncated, info):
+        try:
+            self.observe(observation, reward, terminated, truncated, info)
+        except Exception as e:
+            self.logger.error(f"Bot raised an error during observe: {str(e)}.\n{traceback.format_exc()}")
+            print(f"Bot raised an error during observe: {str(e)}.\n{traceback.format_exc()}")
+
+
     @abstractmethod
     def act(self, observation, reward, terminated, truncated, info) -> tuple[int, int]:
         """
@@ -114,7 +132,7 @@ class Agent(ABC):
             """
             self.logger.debug(f"ActionRequest: {request}")
             try:
-                action = self.act(
+                action = self.get_bot_action(
                     observation=request.observation,
                     reward=request.reward,
                     terminated=request.terminated,
@@ -134,7 +152,7 @@ class Agent(ABC):
             """
             self.logger.debug(f"Observation: {request}")
             try:
-                self.observe(
+                self.do_bot_observation(
                     observation=request.observation,
                     reward=request.reward,
                     terminated=request.terminated,
