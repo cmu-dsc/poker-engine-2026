@@ -336,6 +336,7 @@ class PokerEnv(gym.Env):
         if not new_street and action_type != self.ActionType.DISCARD.value:
             self.acting_agent = 1 - self.acting_agent
 
+        self.min_raise = min(self.min_raise, self.MAX_PLAYER_BET - max(self.bets))
         obs, reward, terminated, truncated, info = self._get_obs(winner, action_type == self.ActionType.INVALID.value)
         if terminated:
             self.logger.debug(
