@@ -14,7 +14,7 @@ import requests
 
 from gym_env import PokerEnv
 
-TIME_LIMIT_SECONDS = 1500
+TIME_LIMIT_SECONDS = 500
 GET_ACTION_ENDPOINT = "/get_action"
 SEND_OBS_ENDPOINT = "/post_observation"
 
