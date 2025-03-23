@@ -310,7 +310,6 @@ def play_hand(
     # game has terminated; prepare and send final observation
     bot0_payload = prepare_payload(obs0, reward0, terminated, truncated, info)
     bot1_payload = prepare_payload(obs1, reward1, terminated, truncated, info)
-
     call_agent_api("POST", base_url_0, SEND_OBS_ENDPOINT, bot0_payload, logger, 0)
     call_agent_api("POST", base_url_1, SEND_OBS_ENDPOINT, bot1_payload, logger, 1)
 
