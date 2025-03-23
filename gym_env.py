@@ -267,11 +267,15 @@ class PokerEnv(gym.Env):
 
         obs0, info0 = self._get_single_player_obs(0)
         obs1, info1 = self._get_single_player_obs(1)
-        info = {
-            "player_0_cards": info0["player_cards"],
-            "player_1_cards": info1["player_cards"],
-            "community_cards": info0["community_cards"],
-        }
+        info = (
+            {
+                "player_0_cards": info0["player_cards"],
+                "player_1_cards": info1["player_cards"],
+                "community_cards": info0["community_cards"],
+            }
+            if self.rl_mode
+            else {}
+        )
 
         return (obs0, obs1), info
 
