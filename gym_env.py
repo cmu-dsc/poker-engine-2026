@@ -334,9 +334,8 @@ class PokerEnv(gym.Env):
             winner = 1 - self.acting_agent
         elif action_type == self.ActionType.CALL.value:
             self.bets[self.acting_agent] = self.bets[1 - self.acting_agent]
-            if not (self.street == 0 and self.acting_agent == self.small_blind_player):
+            if not (self.street == 0 and self.acting_agent == self.small_blind_player and self.bets[self.acting_agent] == self.big_blind_amount):
                 # on the first street, the little blind can "call" the big blind's bet of 2
-                assert self.bets[self.acting_agent] >= self.big_blind_amount
                 new_street = True
         elif action_type == self.ActionType.CHECK.value:
             if self.acting_agent == self.big_blind_player:
