@@ -198,7 +198,7 @@ def run_api_match(
         writer.writeheader()
 
         def format_error(e):
-            return f"ERROR Raised: \"{str(e)}\". Stacktrace:\n{traceback.format_exc()}"
+            return f'ERROR Raised: "{str(e)}". Stacktrace:\n{traceback.format_exc()}'
 
         for hand_number in range(num_hands):
             env = PokerEnv(logger=logger)  # env for a single hand
@@ -338,6 +338,8 @@ def get_match_result(
             - bot0_reward/bot1_reward: Final bankroll amounts (if available)
             - error: Error message (if status is 'error')
     """
+    global time_used_0, time_used_1
+
     result = {"status": status}
 
     # Add result field for completed matches
@@ -359,6 +361,10 @@ def get_match_result(
     if rewards:
         result["bot0_reward"] = rewards[0]
         result["bot1_reward"] = rewards[1]
+
+    # Add time used data
+    result["bot0_time_used"] = time_used_0
+    result["bot1_time_used"] = time_used_1
 
     if error:
         result["error"] = error
