@@ -18,5 +18,9 @@ class Observation(TypedDict):
     time_used: float
     time_left: float
     opp_last_action: str # do we need this?? -dylan
-    
+
+
+@dataclass
+class Info(TypedDict):
+    ...
     
