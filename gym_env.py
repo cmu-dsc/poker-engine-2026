@@ -83,12 +83,22 @@ class PokerEnv(gym.Env):
         DISCARD = 4
         INVALID = 5
 
-    def __init__(self, logger=None, small_blind_amount=1, num_hands=1):
+    def __init__(self, logger=None, small_blind_amount=1, num_hands=1, num_players=6):
         """
         Represents a single hand of poker.
+
+        Args:
+            logger: Optional logger instance
+            small_blind_amount: Amount for small blind (deprecated for bomb-pot)
+            num_hands: Number of hands in the match
+            num_players: Number of players (1-6, default 6)
         """
         super().__init__()
         self.logger = logger or logging.getLogger(__name__)
+        self.num_players = min(max(1, num_players), 6)  # Clamp between 1 and 6
+        self.num_hands = num_hands
+        self.current_hand = 0
+        self._reset_count = 0  # Track number of resets
 
         self.small_blind_amount = small_blind_amount
         self.big_blind_amount = small_blind_amount * 2
@@ -139,58 +149,113 @@ class PokerEnv(gym.Env):
         self.reset(seed=int.from_bytes(os.urandom(32)))
 
     def _get_valid_actions(self, player_num: int):
-        valid_actions = [1, 1, 1, 1, 1]
-        # You can't check if the other player has a larger bet
-        if self.bets[player_num] < self.bets[1 - player_num]:
-            valid_actions[self.ActionType.CHECK.value] = 0
-        # You can't call if you have an equal bet
-        if self.bets[player_num] == self.bets[1 - player_num]:
-            valid_actions[self.ActionType.CALL.value] = 0
-        # You can't discard if you have already discarded
-        if self.discarded_cards[player_num] != -1:
-            valid_actions[self.ActionType.DISCARD.value] = 0
-        # You can discard only in the street (0,1)
-        if self.street > 1:
-            valid_actions[self.ActionType.DISCARD.value] = 0
+        """
+        Returns valid action mask for 6-player bomb-pot rules.
 
-        if (max(self.bets)) == self.MAX_PLAYER_BET:
+        Street 0 (card selection): No betting actions, only card selection (handled separately)
+        Street 1 (betting): CHECK, CALL, RAISE, FOLD
+        Street 2+ (showdown): No actions
+
+        Returns:
+            List of 5 binary values indicating valid actions:
+            [FOLD, RAISE, CHECK, CALL, DISCARD]
+        """
+        valid_actions = [1, 1, 1, 1, 1]
+
+        # Street 0 (card selection): disable betting actions
+        if self.street == 0:
+            valid_actions[self.ActionType.FOLD.value] = 0
+            valid_actions[self.ActionType.RAISE.value] = 0
+            valid_actions[self.ActionType.CHECK.value] = 0
+            valid_actions[self.ActionType.CALL.value] = 0
+            # Card selection is handled separately, not via DISCARD action
+            valid_actions[self.ActionType.DISCARD.value] = 0
+            return valid_actions
+
+        # Street 2+ (showdown): no actions
+        if self.street >= 2:
+            return [0, 0, 0, 0, 0]
+
+        # Street 1 (betting round) - disable DISCARD
+        valid_actions[self.ActionType.DISCARD.value] = 0
+
+        # Get max bet across all players
+        max_bet = max(self.bets)
+        my_bet = self.bets[player_num]
+
+        # Can't CHECK if facing a bet
+        if my_bet < max_bet:
+            valid_actions[self.ActionType.CHECK.value] = 0
+
+        # Can't CALL if bets are equal
+        if my_bet == max_bet:
+            valid_actions[self.ActionType.CALL.value] = 0
+
+        # Can't RAISE if at bet cap
+        if max_bet >= self.MAX_PLAYER_BET:
             valid_actions[self.ActionType.RAISE.value] = 0
 
         return valid_actions
 
     def _get_single_player_obs(self, player_num: int):
         """
-        Returns the observation for the player_num player.
-        """
-        if self.street == 0:
-            num_cards_to_reveal = 0
-        else:
-            num_cards_to_reveal = self.street + 2
+        Returns the observation for a single player matching PlayerObservation type.
 
+        Args:
+            player_num: Seat index (0-5)
+
+        Returns:
+            PlayerObservation dict with all required fields
+        """
+        from poker_types import NUM_SEATS, NUM_BOARDS, BET_CAP, BOARD_CARDS_PER_BOARD
+
+        # Community cards visibility based on street
+        # Street 0 (card selection): cards hidden
+        # Street 1+ (betting/showdown): cards revealed
+        if self.street == 0:
+            community_cards = [[-1] * BOARD_CARDS_PER_BOARD for _ in range(NUM_BOARDS)]
+        else:
+            # Reveal all 15 community cards across 3 boards
+            community_cards = [
+                self.community_cards[i*BOARD_CARDS_PER_BOARD:(i+1)*BOARD_CARDS_PER_BOARD]
+                for i in range(NUM_BOARDS)
+            ]
+
+        # Calculate total pot
+        pot_total = sum(self.bets)
+
+        # Valid actions
+        valid_actions = self._get_valid_actions(player_num)
+
+        # Build observation matching PlayerObservation type
         obs = {
-            "street": self.street,
-            "acting_agent": self.acting_agent,
-            "my_cards": self.player_cards[player_num],
-            "community_cards": self.community_cards[:num_cards_to_reveal] + [-1 for _ in range(5 - num_cards_to_reveal)],
-            "my_bet": self.bets[player_num],
-            "opp_bet": self.bets[1 - player_num],
-            "opp_discarded_card": self.discarded_cards[1 - player_num],
-            "opp_drawn_card": self.drawn_cards[1 - player_num],
-            "my_discarded_card": self.discarded_cards[player_num],
-            "my_drawn_card": self.drawn_cards[player_num],
-            "min_raise": self.min_raise,
-            "max_raise": self.MAX_PLAYER_BET - max(self.bets),
-            "valid_actions": self._get_valid_actions(player_num),
+            'seat': player_num,
+            'acting_seat': self.acting_agent,
+            'street': self.street,
+            'hole_cards': list(self.player_cards[player_num]),
+            'community_cards': community_cards,
+            'bets': list(self.bets),
+            'my_stack': self.stacks[player_num],
+            'all_stacks': list(self.stacks),
+            'button_position': self.button_position,
+            'pot_total': pot_total,
+            'min_raise': self.min_raise,
+            'max_raise': min(BET_CAP, self.MAX_PLAYER_BET - max(self.bets)),
+            'valid_actions': valid_actions,
+            'time_used': 0.0,  # TODO: Implement time tracking
+            'time_left': 300.0,  # TODO: Implement time tracking
+            'hand_number': self.current_hand,
         }
-        # All in situation
+
+        # Add kept_cards if card selection phase is complete
+        if self.kept_cards[player_num]:
+            obs['kept_cards'] = list(self.kept_cards[player_num])
+
+        # All-in situation (cap min_raise to max_raise)
         if obs["min_raise"] > obs["max_raise"]:
             obs["min_raise"] = obs["max_raise"]
 
-        info = {
-            "player_cards": [self.int_card_to_str(card) for card in obs["my_cards"] if card != -1],
-            "community_cards": [self.int_card_to_str(card) for card in obs["community_cards"] if card != -1],
-        }
-        return obs, info
+        return obs
 
     def _get_obs(self, winner, invalid_action=False):
         """
@@ -227,54 +292,90 @@ class PokerEnv(gym.Env):
         return drawn_card
 
     def reset(self, *, seed=None, options=None):
-        #you can merge these variables in if the class vars changes
-        #ex: BLIND_AMOUNT will probably just be a class variable
-        #I just don't know what its name is gonna be after 
-        #self.small_blind_amount and self.big_blind_amount change
-        NUM_PLAYERS = 6
-        DECK_SIZE = 52
-        HAND_SIZE = 5
-        BLIND_AMOUNT = 1
-
         """
-        Resets the entire game.
-        Default is random deal, but options can be provided to set the initial state.
+        Resets the game for a new hand.
 
-        options is a dict with the following keys:
-        - cards: a list of 52 cards to be used in the game
+        For 6-player triple-board bomb-pot:
+        - Deals 5 hole cards to each active player
+        - Deals 15 community cards (3 boards × 5 cards)
+        - Forces $1 bomb-pot ante from all players
+        - Starts at street 0 (card selection phase)
+
+        Args:
+            seed: Random seed for reproducibility
+            options: Dict with optional keys:
+                - 'cards': List of card integers to rig the deck
+                - 'button_seat': Override button position
+
+        Returns:
+            observations: Tuple of 6 PlayerObservation dicts (None for empty seats)
+            info: Dict with game metadata
         """
+        from poker_types import NUM_SEATS, NUM_BOARDS, HOLE_CARDS_PER_PLAYER, BOMB_POT_ANTE
+
         super().reset(seed=seed)
-        self.street = 0
-        self.bets = [0] * NUM_PLAYERS
 
-        # Set default values first
+        # Button position (rotates each hand)
+        self.button_position = self.current_hand % NUM_SEATS
+
+        # Initialize game state
+        self.street = 0  # 0 = card selection, 1 = betting, 2+ = showdown
+        self.bets = [0] * NUM_SEATS
+        self.stacks = [0] * NUM_SEATS  # Net gain/loss tracking (infinite bankroll)
+        self.folded_players = set()  # Track who has folded
+        self.kept_cards = [[] for _ in range(NUM_SEATS)]  # Track card selection
+
+        # Set up deck
+        DECK_SIZE = 52
         self.cards = np.arange(DECK_SIZE)
         np.random.shuffle(self.cards)
-        self.small_blind_player = 0  # Default to player 0
 
-        # Override with any provided options, using defaults as fallbacks
+        # Override options if provided
         if options is not None:
             self.cards = options.get("cards", self.cards)
-            self.small_blind_player = options.get("small_blind_player", self.small_blind_player)
-            
-        # Deal to players and community
-        self.player_cards = [[self._draw_card() for _ in range(HAND_SIZE)] for _ in range(NUM_PLAYERS)]
-        # community_cards starts as a 15-card list for all 3 boards
+            self.button_position = options.get("button_seat", self.button_position)
+
+        # Deal hole cards (5 per player, only to active players)
+        self.player_cards = []
+        for seat in range(NUM_SEATS):
+            if seat < self.num_players:
+                self.player_cards.append([self._draw_card() for _ in range(HOLE_CARDS_PER_PLAYER)])
+            else:
+                self.player_cards.append([])  # Empty for inactive seats
+
+        # Deal community cards (15 total = 3 boards × 5 cards)
         self.community_cards = [self._draw_card() for _ in range(15)]
 
-        # Assign blinds
-        self.acting_agent = self.small_blind_player
-        self.bets = [BLIND_AMOUNT] * NUM_PLAYERS
-        self.min_raise = BLIND_AMOUNT
-        self.last_street_bet = BLIND_AMOUNT
+        # Apply bomb-pot ante for active players
+        for seat in range(self.num_players):
+            self.bets[seat] = BOMB_POT_ANTE
+            self.stacks[seat] -= BOMB_POT_ANTE  # Deduct from stack
 
-        obsListRaw = [self._get_single_player_obs(playerNum) for playerNum in range(NUM_PLAYERS)]
-        obsListFiltered = tuple(obsItem for (obsItem, _) in obsListRaw)
-        info = {}
+        # First action is card selection, starts left of button
+        self.acting_agent = (self.button_position + 1) % NUM_SEATS
+        self.min_raise = BOMB_POT_ANTE
+        self.last_street_bet = BOMB_POT_ANTE
 
-        #Need to maintain the type of self.observationSpace to match this
-        #Right now they're both tuples - they need to stay coherent
-        return obsListFiltered, info
+        # Generate observations for all seats
+        observations = []
+        for seat in range(NUM_SEATS):
+            if seat < self.num_players:
+                obs = self._get_single_player_obs(seat)
+                observations.append(obs)
+            else:
+                observations.append(None)  # Null observation for empty seat
+
+        info = {
+            'hand_number': self.current_hand,
+            'button_position': self.button_position,
+        }
+
+        # Increment hand counter for next reset (skip first reset in __init__)
+        self._reset_count += 1
+        if self._reset_count > 1:
+            self.current_hand += 1
+
+        return tuple(observations), info
 
     def _next_street(self):
         """
