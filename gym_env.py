@@ -152,32 +152,32 @@ class PokerEnv(gym.Env):
         """
         Returns valid action mask for 6-player bomb-pot rules.
 
-        Street 0 (card selection): No betting actions, only card selection (handled separately)
+        Street 0 (card selection): Only KEEP action valid
         Street 1 (betting): CHECK, CALL, RAISE, FOLD
         Street 2+ (showdown): No actions
 
         Returns:
-            List of 5 binary values indicating valid actions:
-            [FOLD, RAISE, CHECK, CALL, DISCARD]
+            List of 6 binary values indicating valid actions:
+            [FOLD, RAISE, CHECK, CALL, KEEP, INVALID]
         """
-        valid_actions = [1, 1, 1, 1, 1]
+        valid_actions = [0, 0, 0, 0, 0, 0]  # Start with all disabled
 
-        # Street 0 (card selection): disable betting actions
+        # Street 0 (card selection): only KEEP is valid
         if self.street == 0:
-            valid_actions[self.ActionType.FOLD.value] = 0
-            valid_actions[self.ActionType.RAISE.value] = 0
-            valid_actions[self.ActionType.CHECK.value] = 0
-            valid_actions[self.ActionType.CALL.value] = 0
-            # Card selection is handled separately, not via DISCARD action
-            valid_actions[self.ActionType.DISCARD.value] = 0
+            valid_actions[self.ActionType.KEEP.value] = 1
             return valid_actions
 
         # Street 2+ (showdown): no actions
         if self.street >= 2:
-            return [0, 0, 0, 0, 0]
+            return valid_actions  # All zeros
 
-        # Street 1 (betting round) - disable DISCARD
-        valid_actions[self.ActionType.DISCARD.value] = 0
+        # Street 1 (betting round) - enable betting actions
+        valid_actions[self.ActionType.FOLD.value] = 1
+        valid_actions[self.ActionType.RAISE.value] = 1
+        valid_actions[self.ActionType.CHECK.value] = 1
+        valid_actions[self.ActionType.CALL.value] = 1
+        # KEEP and INVALID are not valid during betting
+        # (already 0 from initialization)
 
         # Get max bet across all players
         max_bet = max(self.bets)
@@ -458,16 +458,18 @@ class PokerEnv(gym.Env):
             'hand_description': hand_description
         }
 
-    def step(self, action: tuple[int, int, int]):
+    def step(self, action):
         """
         Takes a step in the game for 6-player bomb-pot.
 
-        Action format depends on street:
-        - Street 0 (card selection): action = (card_idx_1, card_idx_2, -1)
-          - card_idx_1, card_idx_2: indices (0-4) of cards to KEEP from hole_cards
-        - Street 1 (betting): action = (action_type, raise_amount, -1)
-          - action_type: FOLD, CHECK, CALL, or RAISE
-          - raise_amount: amount to raise (if RAISE action)
+        Args:
+            action: Action NamedTuple with fields:
+                - action_type: int (FOLD=0, RAISE=1, CHECK=2, CALL=3, KEEP=4, INVALID=5)
+                - raise_amount: int (amount to raise, 0 if not raising)
+                - kept_cards: Tuple[int, int] (indices 0-4 of cards to keep during selection)
+
+        Street 0 (card selection): action.action_type = KEEP, action.kept_cards = (idx1, idx2)
+        Street 1 (betting): action.action_type = FOLD/CHECK/CALL/RAISE, action.raise_amount = amount
 
         Returns:
             observations: Tuple of 6 PlayerObservation dicts (None for empty seats)
@@ -476,10 +478,11 @@ class PokerEnv(gym.Env):
             truncated: bool, always False
             info: dict with hand metadata
         """
-        from poker_types import NUM_SEATS, HOLE_CARDS_PER_PLAYER, KEPT_CARDS_PER_PLAYER
+        from poker_types import NUM_SEATS, HOLE_CARDS_PER_PLAYER, KEPT_CARDS_PER_PLAYER, Action
 
-        # Unpack action
-        param1, param2, param3 = action
+        # Convert to Action NamedTuple if needed (for backward compatibility with tests)
+        if not isinstance(action, Action):
+            action = Action(*action)
 
         invalid_action = False
         winner = None
@@ -494,43 +497,51 @@ class PokerEnv(gym.Env):
         # STREET 0: CARD SELECTION PHASE
         # ===================================================================
         if self.street == 0:
-            # Action format: (card_idx_1, card_idx_2, -1)
-            card_idx_1, card_idx_2 = param1, param2
-
-            acting_player = self.acting_agent
-            player_hole_cards = self.player_cards[acting_player]
-
-            # Validate card selection
-            valid_indices = list(range(HOLE_CARDS_PER_PLAYER))
-
-            # Check for invalid indices
-            if card_idx_1 not in valid_indices or card_idx_2 not in valid_indices:
+            # Validate action type
+            if action.action_type != self.ActionType.KEEP.value:
                 self.logger.error(
-                    f"Player {acting_player} selected invalid card indices: {card_idx_1}, {card_idx_2}. "
-                    f"Valid indices: {valid_indices}"
+                    f"Player {self.acting_agent} sent action_type {action.action_type} "
+                    f"during card selection (expected KEEP={self.ActionType.KEEP.value})"
                 )
                 invalid_action = True
-                self.folded_players.add(acting_player)
-
-            # Check for duplicate selection
-            elif card_idx_1 == card_idx_2:
-                self.logger.error(
-                    f"Player {acting_player} selected same card twice: index {card_idx_1}"
-                )
-                invalid_action = True
-                self.folded_players.add(acting_player)
-
-            # Valid selection
+                self.folded_players.add(self.acting_agent)
             else:
-                # Store the kept cards (actual card values, not indices)
-                kept_card_1 = player_hole_cards[card_idx_1]
-                kept_card_2 = player_hole_cards[card_idx_2]
-                self.kept_cards[acting_player] = [kept_card_1, kept_card_2]
+                card_idx_1, card_idx_2 = action.kept_cards
 
-                self.logger.debug(
-                    f"Player {acting_player} kept cards at indices {card_idx_1}, {card_idx_2}: "
-                    f"cards {kept_card_1}, {kept_card_2}"
-                )
+                acting_player = self.acting_agent
+                player_hole_cards = self.player_cards[acting_player]
+
+                # Validate card selection
+                valid_indices = list(range(HOLE_CARDS_PER_PLAYER))
+
+                # Check for invalid indices
+                if card_idx_1 not in valid_indices or card_idx_2 not in valid_indices:
+                    self.logger.error(
+                        f"Player {acting_player} selected invalid card indices: {card_idx_1}, {card_idx_2}. "
+                        f"Valid indices: {valid_indices}"
+                    )
+                    invalid_action = True
+                    self.folded_players.add(acting_player)
+
+                # Check for duplicate selection
+                elif card_idx_1 == card_idx_2:
+                    self.logger.error(
+                        f"Player {acting_player} selected same card twice: index {card_idx_1}"
+                    )
+                    invalid_action = True
+                    self.folded_players.add(acting_player)
+
+                # Valid selection
+                else:
+                    # Store the kept cards (actual card values, not indices)
+                    kept_card_1 = player_hole_cards[card_idx_1]
+                    kept_card_2 = player_hole_cards[card_idx_2]
+                    self.kept_cards[acting_player] = [kept_card_1, kept_card_2]
+
+                    self.logger.debug(
+                        f"Player {acting_player} kept cards at indices {card_idx_1}, {card_idx_2}: "
+                        f"cards {kept_card_1}, {kept_card_2}"
+                    )
 
             # Advance to next player
             self.acting_agent = (self.acting_agent + 1) % NUM_SEATS
@@ -555,15 +566,25 @@ class PokerEnv(gym.Env):
         # STREET 1: BETTING ROUND
         # ===================================================================
         elif self.street == 1:
-            # Action format: (action_type, raise_amount, -1)
-            action_type, raise_amount = param1, param2
+            # Extract action details
+            action_type = action.action_type
+            raise_amount = action.raise_amount
 
             acting_player = self.acting_agent
             valid_actions = self._get_valid_actions(acting_player)
 
-            # Validate action type
-            if action_type not in range(len(self.ActionType) - 1):
-                self.logger.error(f"Player {acting_player} invalid action type: {action_type}")
+            # Validate action type (must be FOLD, RAISE, CHECK, or CALL during betting)
+            valid_betting_actions = [
+                self.ActionType.FOLD.value,
+                self.ActionType.RAISE.value,
+                self.ActionType.CHECK.value,
+                self.ActionType.CALL.value
+            ]
+            if action_type not in valid_betting_actions:
+                self.logger.error(
+                    f"Player {acting_player} invalid action type: {action_type} "
+                    f"(expected FOLD/RAISE/CHECK/CALL during betting)"
+                )
                 invalid_action = True
                 self.folded_players.add(acting_player)
 

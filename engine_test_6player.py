@@ -11,10 +11,18 @@ Tests cover:
 """
 
 from gym_env import PokerEnv
-from poker_types import NUM_SEATS, NUM_BOARDS, HOLE_CARDS_PER_PLAYER, BOMB_POT_ANTE
+from poker_types import NUM_SEATS, NUM_BOARDS, HOLE_CARDS_PER_PLAYER, BOMB_POT_ANTE, Action
 import logging
 
 logging.basicConfig(level=logging.DEBUG)
+
+# Action type constants (matching ActionType enum in gym_env.py)
+FOLD = 0
+RAISE = 1
+CHECK = 2
+CALL = 3
+KEEP = 4
+INVALID = 5
 
 # Card encoding helpers (same as original tests)
 RANKS = "23456789A"
@@ -230,7 +238,7 @@ def test_card_selection_valid():
         acting_seat = observations[0]['acting_seat']
 
         # Acting player selects cards (keep first 2 cards from their hand)
-        action = (0, 1, -1)  # Keep cards at indices 0 and 1
+        action = Action(action_type=KEEP, raise_amount=0, kept_cards=(0, 1))
 
         observations, rewards, terminated, truncated, info = env.step(action)
 
@@ -267,7 +275,7 @@ def test_card_selection_invalid_index():
 
     # Player 0's turn - select invalid index
     acting_seat = observations[0]['acting_seat']
-    invalid_action = (0, 5, -1)  # Index 5 is out of range (valid: 0-4)
+    invalid_action = Action(action_type=KEEP, raise_amount=0, kept_cards=(0, 5))  # Index 5 is out of range (valid: 0-4)
 
     observations, rewards, terminated, truncated, info = env.step(invalid_action)
 
@@ -290,7 +298,7 @@ def test_card_selection_duplicate_cards():
     observations, info = env.reset(options={"cards": rigged_deck})
 
     # Select same card twice
-    invalid_action = (2, 2, -1)
+    invalid_action = Action(action_type=KEEP, raise_amount=0, kept_cards=(2, 2))
     observations, rewards, terminated, truncated, info = env.step(invalid_action)
 
     # Should be treated as invalid
@@ -395,23 +403,20 @@ def test_player_raises_others_call():
 
     # Complete card selection
     for _ in range(NUM_SEATS):
-        observations, rewards, terminated, truncated, info = env.step((0, 1, -1))
+        observations, rewards, terminated, truncated, info = env.step(Action(action_type=KEEP, raise_amount=0, kept_cards=(0, 1)))
 
     # Now in betting round
     assert observations[0]['street'] == 1
 
-    CHECK = 2
-    CALL = 3
-    RAISE = 1
 
     # P0 (left of button) checks
     acting_seat = observations[0]['acting_seat']
     assert acting_seat == (observations[0]['button_position'] + 1) % NUM_SEATS
-    observations, rewards, terminated, truncated, info = env.step((CHECK, 0, -1))
+    observations, rewards, terminated, truncated, info = env.step(Action(action_type=CHECK, raise_amount=0, kept_cards=(0, 0)))
 
     # P1 raises $10
     acting_seat = observations[0]['acting_seat']
-    observations, rewards, terminated, truncated, info = env.step((RAISE, 10, -1))
+    observations, rewards, terminated, truncated, info = env.step(Action(action_type=RAISE, raise_amount=10, kept_cards=(0, 0)))
 
     # Verify P1's bet increased
     p1_bet = observations[0]['bets'][acting_seat] if acting_seat < NUM_SEATS else observations[0]['bets'][1]
@@ -420,7 +425,7 @@ def test_player_raises_others_call():
 
     # P2-P5 and P0 call
     for i in range(5):
-        observations, rewards, terminated, truncated, info = env.step((CALL, 0, -1))
+        observations, rewards, terminated, truncated, info = env.step(Action(action_type=CALL, raise_amount=0, kept_cards=(0, 0)))
 
     # After everyone calls, betting round should end
     assert observations[0]['street'] >= 2 or terminated, \
@@ -444,19 +449,17 @@ def test_all_fold_except_one():
 
     # Complete card selection
     for _ in range(NUM_SEATS):
-        observations, rewards, terminated, truncated, info = env.step((0, 1, -1))
+        observations, rewards, terminated, truncated, info = env.step(Action(action_type=KEEP, raise_amount=0, kept_cards=(0, 1)))
 
-    FOLD = 0
-    RAISE = 1
 
     # P1 raises $20 (acts first, left of button)
-    observations, rewards, terminated, truncated, info = env.step((RAISE, 20, -1))
+    observations, rewards, terminated, truncated, info = env.step(Action(action_type=RAISE, raise_amount=20, kept_cards=(0, 0)))
 
     # P2-P5, P0 all fold
     for i in range(1, NUM_SEATS):
         if terminated:
             break
-        observations, rewards, terminated, truncated, info = env.step((FOLD, 0, -1))
+        observations, rewards, terminated, truncated, info = env.step(Action(action_type=FOLD, raise_amount=0, kept_cards=(0, 0)))
 
     # Game should terminate with P1 as winner (P1 acts first, left of button)
     assert terminated, "Game should terminate when only one player remains"
@@ -486,13 +489,12 @@ def test_bet_cap_enforcement():
 
     # Complete card selection
     for _ in range(NUM_SEATS):
-        observations, rewards, terminated, truncated, info = env.step((0, 1, -1))
+        observations, rewards, terminated, truncated, info = env.step(Action(action_type=KEEP, raise_amount=0, kept_cards=(0, 1)))
 
-    RAISE = 1
 
     # Attempt to raise more than BET_CAP
     excessive_raise = BET_CAP + 50
-    observations, rewards, terminated, truncated, info = env.step((RAISE, excessive_raise, -1))
+    observations, rewards, terminated, truncated, info = env.step(Action(action_type=RAISE, raise_amount=excessive_raise, kept_cards=(0, 0)))
 
     # Should be flagged as invalid
     assert info.get('invalid_action') == True, \
@@ -564,12 +566,11 @@ def test_showdown_single_winner_all_boards():
 
     # Complete card selection - P0 keeps Aces, P1 keeps 2s, P2 keeps 4s
     for i in range(3):
-        observations, rewards, terminated, truncated, info = env.step((0, 1, -1))
+        observations, rewards, terminated, truncated, info = env.step(Action(action_type=KEEP, raise_amount=0, kept_cards=(0, 1)))
 
     # All players check (go to showdown)
-    CHECK = 2
     for i in range(3):
-        observations, rewards, terminated, truncated, info = env.step((CHECK, 0, -1))
+        observations, rewards, terminated, truncated, info = env.step(Action(action_type=CHECK, raise_amount=0, kept_cards=(0, 0)))
 
     # Should be terminated with showdown
     assert terminated, "Game should terminate after showdown"
@@ -603,12 +604,11 @@ def test_showdown_different_winners_per_board():
 
     # Complete card selection
     for _ in range(3):
-        observations, rewards, terminated, truncated, info = env.step((0, 1, -1))
+        observations, rewards, terminated, truncated, info = env.step(Action(action_type=KEEP, raise_amount=0, kept_cards=(0, 1)))
 
     # All check
-    CHECK = 2
     for _ in range(3):
-        observations, rewards, terminated, truncated, info = env.step((CHECK, 0, -1))
+        observations, rewards, terminated, truncated, info = env.step(Action(action_type=CHECK, raise_amount=0, kept_cards=(0, 0)))
 
     # Should terminate
     assert terminated, "Game should terminate after showdown"
@@ -640,15 +640,13 @@ def test_showdown_with_betting():
 
     # Complete card selection
     for _ in range(3):
-        observations, rewards, terminated, truncated, info = env.step((0, 1, -1))
+        observations, rewards, terminated, truncated, info = env.step(Action(action_type=KEEP, raise_amount=0, kept_cards=(0, 1)))
 
     # P1 raises $10 (acts first), P2 and P0 call
-    RAISE = 1
-    CALL = 3
 
-    observations, rewards, terminated, truncated, info = env.step((RAISE, 10, -1))
-    observations, rewards, terminated, truncated, info = env.step((CALL, 0, -1))
-    observations, rewards, terminated, truncated, info = env.step((CALL, 0, -1))
+    observations, rewards, terminated, truncated, info = env.step(Action(action_type=RAISE, raise_amount=10, kept_cards=(0, 0)))
+    observations, rewards, terminated, truncated, info = env.step(Action(action_type=CALL, raise_amount=0, kept_cards=(0, 0)))
+    observations, rewards, terminated, truncated, info = env.step(Action(action_type=CALL, raise_amount=0, kept_cards=(0, 0)))
 
     # Should terminate after showdown
     assert terminated, "Game should terminate after all players call"
@@ -683,12 +681,11 @@ def test_showdown_info_contains_board_results():
 
     # Complete card selection
     for _ in range(3):
-        observations, rewards, terminated, truncated, info = env.step((0, 1, -1))
+        observations, rewards, terminated, truncated, info = env.step(Action(action_type=KEEP, raise_amount=0, kept_cards=(0, 1)))
 
     # All check
-    CHECK = 2
     for _ in range(3):
-        observations, rewards, terminated, truncated, info = env.step((CHECK, 0, -1))
+        observations, rewards, terminated, truncated, info = env.step(Action(action_type=CHECK, raise_amount=0, kept_cards=(0, 0)))
 
     # Check that info contains board_results
     assert 'board_results' in info, f"Info should contain board_results, got {info.keys()}"
