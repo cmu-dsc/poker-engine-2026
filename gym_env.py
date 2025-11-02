@@ -210,16 +210,14 @@ class PokerEnv(gym.Env):
         from poker_types import NUM_SEATS, NUM_BOARDS, BET_CAP, BOARD_CARDS_PER_BOARD
 
         # Community cards visibility based on street
-        # Street 0 (card selection): cards hidden
-        # Street 1+ (betting/showdown): cards revealed
-        if self.street == 0:
-            community_cards = [[-1] * BOARD_CARDS_PER_BOARD for _ in range(NUM_BOARDS)]
-        else:
-            # Reveal all 15 community cards across 3 boards
-            community_cards = [
-                self.community_cards[i*BOARD_CARDS_PER_BOARD:(i+1)*BOARD_CARDS_PER_BOARD]
-                for i in range(NUM_BOARDS)
-            ]
+        # Per user clarification: cards are revealed during street 0 for "informed selection"
+        # Street 0 (card selection): cards VISIBLE (players see boards before choosing)
+        # Street 1+ (betting/showdown): cards visible
+        # All streets: reveal all 15 community cards across 3 boards
+        community_cards = [
+            self.community_cards[i*BOARD_CARDS_PER_BOARD:(i+1)*BOARD_CARDS_PER_BOARD]
+            for i in range(NUM_BOARDS)
+        ]
 
         # Calculate total pot
         pot_total = sum(self.bets)
@@ -418,85 +416,118 @@ class PokerEnv(gym.Env):
 
     def step(self, action: tuple[int, int, int]):
         """
-        Takes a step in the game, given the action taken by the active player.
+        Takes a step in the game for 6-player bomb-pot.
 
-        `action`: (action_type, raise_amount, card_to_discard)
-            - `action_type`: `int`, index of the action type
-            - `raise_amount`: `int`, how much to raise, or 0 for a check or call
-            - `card_to_discard`: `int`, index of the card which you would like to discard (0, or 1) or -1
+        Action format depends on street:
+        - Street 0 (card selection): action = (card_idx_1, card_idx_2, -1)
+          - card_idx_1, card_idx_2: indices (0-4) of cards to KEEP from hole_cards
+        - Street 1 (betting): action = (action_type, raise_amount, -1)
+          - action_type: FOLD, CHECK, CALL, or RAISE
+          - raise_amount: amount to raise (if RAISE action)
+
+        Returns:
+            observations: Tuple of 6 PlayerObservation dicts (None for empty seats)
+            rewards: Tuple of 6 floats (0 until hand completes)
+            terminated: bool, True if hand is over
+            truncated: bool, always False
+            info: dict with hand metadata
         """
-        action_type, raise_amount, card_to_discard = action
-        valid_actions = self._get_valid_actions(self.acting_agent)
-        self.logger.debug(f"Action type: {action_type}, Valid actions: {valid_actions}, Street: {self.street}, Bets: {self.bets}")
+        from poker_types import NUM_SEATS, HOLE_CARDS_PER_PLAYER, KEPT_CARDS_PER_PLAYER
 
-        # Handle invalid actions
-        if not valid_actions[action_type]:
-            action_name = self.ActionType(action_type).name
-            valid_action_names = [self.ActionType(i).name for i, is_valid in enumerate(valid_actions) if is_valid]
-            self.logger.error(f"Player {self.acting_agent} attempted invalid action: {action_name}. Valid actions are: {valid_action_names}")
-            action_type = self.ActionType.INVALID.value
+        # Unpack action
+        param1, param2, param3 = action
 
-        if action_type == self.ActionType.RAISE.value and not (self.min_raise <= raise_amount <= (self.MAX_PLAYER_BET - max(self.bets))):
-            self.logger.error(f"Player {self.acting_agent} attempted invalid raise amount: {raise_amount}. Must be between {self.min_raise} and {self.MAX_PLAYER_BET - max(self.bets)}")
-            action_type = self.ActionType.INVALID.value
-
+        invalid_action = False
         winner = None
+        terminated = False
 
-        new_street = False
-        if action_type in (self.ActionType.FOLD.value, self.ActionType.INVALID.value):
-            # We consider invalid actions as a fold
-            self.logger.debug(f"Player {self.acting_agent} Folded")
-            winner = 1 - self.acting_agent
-        elif action_type == self.ActionType.CALL.value:
-            self.bets[self.acting_agent] = self.bets[1 - self.acting_agent]
-            if not (self.street == 0 and self.acting_agent == self.small_blind_player and self.bets[self.acting_agent] == self.big_blind_amount):
-                # on the first street, the little blind can "call" the big blind's bet of 2
-                new_street = True
-        elif action_type == self.ActionType.CHECK.value:
-            if self.acting_agent == self.big_blind_player:
-                new_street = True  # big blind checks mean next street
-        elif action_type == self.ActionType.RAISE.value:
-            assert (
-                self.bets[1 - self.acting_agent] >= self.bets[self.acting_agent]
-            ), "Expected the opponent to have bet at least as much as current player given current player is raising"
-            self.bets[self.acting_agent] = self.bets[1 - self.acting_agent] + raise_amount
-            raise_so_far = self.bets[1 - self.acting_agent] - self.last_street_bet
+        # ===================================================================
+        # STREET 0: CARD SELECTION PHASE
+        # ===================================================================
+        if self.street == 0:
+            # Action format: (card_idx_1, card_idx_2, -1)
+            card_idx_1, card_idx_2 = param1, param2
 
-            max_raise = self.MAX_PLAYER_BET - max(self.bets)
-            min_raise_no_limit = raise_so_far + raise_amount
-            self.min_raise = min(min_raise_no_limit, max_raise)
-        else:
-            # Must be DISCARD at this point
-            assert action_type == self.ActionType.DISCARD.value, f"Unexpected action type: {action_type}"
-            if card_to_discard != -1:
-                self.discarded_cards[self.acting_agent] = self.player_cards[self.acting_agent][card_to_discard]
-                drawn_card = self._draw_card()
-                self.drawn_cards[self.acting_agent] = drawn_card
-                self.player_cards[self.acting_agent][card_to_discard] = drawn_card
+            acting_player = self.acting_agent
+            player_hole_cards = self.player_cards[acting_player]
 
-        if new_street:
-            self._next_street()
-            if self.street > 3:
-                winner = self._get_winner()
+            # Validate card selection
+            valid_indices = list(range(HOLE_CARDS_PER_PLAYER))
 
-        if not new_street and action_type != self.ActionType.DISCARD.value:
-            self.acting_agent = 1 - self.acting_agent
+            # Check for invalid indices
+            if card_idx_1 not in valid_indices or card_idx_2 not in valid_indices:
+                self.logger.error(
+                    f"Player {acting_player} selected invalid card indices: {card_idx_1}, {card_idx_2}. "
+                    f"Valid indices: {valid_indices}"
+                )
+                invalid_action = True
+                self.folded_players.add(acting_player)
 
-        self.min_raise = min(self.min_raise, self.MAX_PLAYER_BET - max(self.bets))
-        obs, reward, terminated, truncated, info = self._get_obs(winner, action_type == self.ActionType.INVALID.value)
-        if terminated:
-            self.logger.debug(
-                f"Game is terminated. P0 cards: {list(map(self.int_card_to_str, self.player_cards[0]))}; P1 cards: {list(map(self.int_card_to_str, self.player_cards[1]))}; board cards: {list(map(self.int_card_to_str, self.community_cards))}"
-            )
+            # Check for duplicate selection
+            elif card_idx_1 == card_idx_2:
+                self.logger.error(
+                    f"Player {acting_player} selected same card twice: index {card_idx_1}"
+                )
+                invalid_action = True
+                self.folded_players.add(acting_player)
 
-            if winner == 0:
-                reward = (min(self.bets), -min(self.bets))
-            elif winner == 1:
-                reward = (-min(self.bets), min(self.bets))
+            # Valid selection
             else:
-                # tie
-                reward = (0, 0)
+                # Store the kept cards (actual card values, not indices)
+                kept_card_1 = player_hole_cards[card_idx_1]
+                kept_card_2 = player_hole_cards[card_idx_2]
+                self.kept_cards[acting_player] = [kept_card_1, kept_card_2]
 
-            return obs, reward, terminated, truncated, info
+                self.logger.debug(
+                    f"Player {acting_player} kept cards at indices {card_idx_1}, {card_idx_2}: "
+                    f"cards {kept_card_1}, {kept_card_2}"
+                )
 
-        return obs, reward, terminated, truncated, info
+            # Advance to next player
+            self.acting_agent = (self.acting_agent + 1) % NUM_SEATS
+
+            # Skip empty seats
+            while self.acting_agent >= self.num_players:
+                self.acting_agent = (self.acting_agent + 1) % NUM_SEATS
+
+            # Check if all active players have selected
+            players_selected = sum(1 for i in range(self.num_players) if self.kept_cards[i])
+            if players_selected >= (self.num_players - len(self.folded_players)):
+                # All active players have selected, advance to betting round
+                self.street = 1
+                self.acting_agent = (self.button_position + 1) % NUM_SEATS
+                # Skip folded/empty players
+                while self.acting_agent >= self.num_players or self.acting_agent in self.folded_players:
+                    self.acting_agent = (self.acting_agent + 1) % NUM_SEATS
+
+                self.logger.info(f"Card selection complete. Advancing to street 1 (betting)")
+
+        # ===================================================================
+        # STREET 1+: BETTING ROUND (TODO: Implement in next phase)
+        # ===================================================================
+        else:
+            # TODO: Implement betting logic
+            self.logger.error(f"Betting not yet implemented (street {self.street})")
+            terminated = True
+
+        # Build observations and rewards
+        observations = []
+        for seat in range(NUM_SEATS):
+            if seat < self.num_players:
+                obs = self._get_single_player_obs(seat)
+                observations.append(obs)
+            else:
+                observations.append(None)
+
+        # Rewards are 0 until hand completes
+        rewards = tuple([0.0] * NUM_SEATS)
+
+        # Info
+        info = {
+            'invalid_action': invalid_action,
+            'eliminated_seats': list(self.folded_players),
+        }
+
+        truncated = False
+
+        return tuple(observations), rewards, terminated, truncated, info

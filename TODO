@@ -76,3 +76,57 @@ Test Cases Needed:
 2. Different winners per board → pot split 3 ways
 3. Tie on one board → that board's pot split between tied players
 4. All fold except one → winner gets full pot without showdown
+
+
+Summary of Progress
+
+  We've successfully implemented the card selection phase for the 6-player triple-board bomb-pot poker engine using test-driven development!
+
+  ✅ Completed Implementation
+
+  Phase 1: Types & Reset (Previously)
+  - Defined PlayerObservation, TableObservation, and related types in poker_types.py
+  - Implemented 6-player reset() with bomb-pot ante and button rotation
+  - Community cards visible from the start (informed selection)
+
+  Phase 2: Card Selection (Just Completed)
+
+  Updated Files:
+  1. gym_env.py - step() method:
+    - Implemented Street 0 (card selection) logic
+    - Action format: (card_idx_1, card_idx_2, -1) where indices are 0-4
+    - Validates card selection (no duplicates, valid indices)
+    - Invalid selections → player marked as folded
+    - After all players select → advances to Street 1 (betting)
+  2. engine_test_6player.py - Added 4 card selection tests:
+    - test_community_cards_revealed_during_selection() ✓
+    - test_card_selection_valid() ✓
+    - test_card_selection_invalid_index() ✓
+    - test_card_selection_duplicate_cards() ✓
+
+  Expected Behaviors Verified
+
+  Card Selection Phase:
+  - ✅ Community cards are visible during card selection (informed selection)
+  - ✅ Players take turns selecting 2 cards from their 5 hole cards
+  - ✅ Action format: (card_index_1, card_index_2, -1) with indices 0-4
+  - ✅ Invalid index (out of range) → player folded
+  - ✅ Duplicate selection (same card twice) → player folded
+  - ✅ After all active players select → game advances to street 1
+  - ✅ kept_cards stored in observation for downstream use
+
+  Test Results
+
+  ✓ All reset() tests passed!
+  ✓ All card selection tests passed!
+  🎉 All tests passed!
+
+  ---
+  Next Steps
+
+  Would you like me to continue with Phase 3: Betting Round implementation, or would you prefer to:
+  1. Review the current implementation
+  2. Add more edge case tests for card selection
+  3. Work on a different part of the system (match.py, agents, etc.)
+
+  The next phase would involve implementing the single post-flop betting round (street 1) with actions: FOLD, CHECK, CALL, RAISE.
