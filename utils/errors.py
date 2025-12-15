@@ -318,3 +318,35 @@ def log_and_suppress_errors(
 
         return wrapper
     return decorator
+
+
+# Custom Exception Classes for Tournament Server
+
+class DisconnectionError(Exception):
+    """
+    Exception raised when a bot disconnects from the server.
+
+    This is a special case of failure that indicates network/connectivity issues
+    rather than invalid bot logic.
+    """
+    pass
+
+
+class InvalidActionError(Exception):
+    """
+    Exception raised when a bot sends an invalid action.
+
+    This includes:
+    - Malformed action format (not a 4-tuple)
+    - Invalid action type for current game state
+    - Out-of-range raise amounts
+    - Invalid card selection indices
+    """
+    pass
+
+
+class TimeoutError(Exception):
+    """
+    Exception raised when a bot exceeds its time limit.
+    """
+    pass
