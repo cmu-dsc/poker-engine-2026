@@ -2,6 +2,7 @@ import logging
 import multiprocessing
 import json
 import importlib
+import sys
 
 from match import run_api_match
 
@@ -15,8 +16,9 @@ def load_agent_class(file_path):
     return getattr(module, class_name)
 
 def main():
-    # Load configuration
-    with open('agent_config.json', 'r') as f:
+    # Load configuration (optionally pass config file as first arg)
+    config_path = sys.argv[1] if len(sys.argv) > 1 else 'agent_config.json'
+    with open(config_path, 'r') as f:
         config = json.load(f)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

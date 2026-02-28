@@ -1,0 +1,15 @@
+{
+    "bot0": {
+        "file_path": "submission.prob_player.PlayerAgent",
+        "port": 8000,
+        "player_id": "prob_bot"
+    },
+    "bot1": {
+        "file_path": "submission.rl_player.PlayerAgent",
+        "port": 8001,
+        "player_id": "rl_bot"
+    },
+    "match_settings": {
+        "csv_output_path": "./match_prob_vs_rl.csv"
+    }
+}
